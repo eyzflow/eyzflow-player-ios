@@ -5,3 +5,6 @@
 DerivedData/
 .DS_Store
 Package.resolved
+
+# The developer's Apple team for device builds of the example.
+Example/Config/Team.xcconfig

@@ -2,24 +2,21 @@
 
 The EYZFlow video player for iOS and tvOS apps, as a Swift package.
 
-This first version holds the player's EYZFlow side, without UI: the rules the
-EYZFlow web player and the Flutter package `eyzflow_player` follow against
-`https://api.eyzflow.com`, ported one to one so native Apple apps behave the
-same:
+It plays EYZFlow streams full screen in AVKit's own player, with the EYZFlow
+rules built in, the same as the EYZFlow web player and the Flutter package
+[`eyzflow_player`](https://pub.dev/packages/eyzflow_player):
 
+- **FairPlay** through `AVContentKeySession`, with the viewer's DRM access token,
+- **AirPlay**, **Picture in Picture**, subtitle and audio menus from AVKit, and
+  on Apple TV the scrubbing previews from the streams' I-frame playlists,
 - the **player key check** (`POST /v1/player/license`) and its renewal,
-- **playback sessions** for the plan's stream and device limits,
-- the **DRM access token** (the `access-token` header the licence servers read),
-- the **device id**,
+- **playback sessions** for the plan's stream and device limits, with the
+  same messages as the web and Flutter players,
 - **playback quality analytics** ("beats", `POST /v1/player/beat`),
-- **player configs** from the dashboard (`GET /v1/player-configs/{id}`),
-- **WebVTT thumbnail tracks** for scrubbing previews,
-- the **stream source** model and its derived stream and DRM URLs,
-- and the **playback coordinator** that runs all of it in the web player's
-  order around one playback.
+- **watch progress** for films, saved where the app says.
 
-Requirements: iOS 16, tvOS 16, Swift 6 (language mode 6). macOS 13 is listed
-only so `swift test` runs on a Mac. No third-party dependencies.
+Requirements: iOS 16, iPadOS 16, tvOS 16, Swift 6. No third-party
+dependencies.
 
 ## Install
 
@@ -33,12 +30,58 @@ only so `swift test` runs on a Mac. No third-party dependencies.
 import EYZFlowPlayer
 ```
 
+## Use
+
+```swift
+EYZFlowPlayer.present(EYZFlowPlayerOptions(
+    streamID: streamID,                         // the EYZFlow stream id
+    title: "The film",
+    sourceType: .film(catalogueID: catalogueID), // .trailer(…) plays without DRM
+    progressSeconds: 754,                       // resume, or nil
+    playerKey: "pk_…",                          // optional: key check and analytics
+    drmAuthorization: "Bearer \(viewerToken)",
+    storefrontID: storefrontID,                 // stream and device limits
+    watchProgressStore: MyWatchHistory(),
+    onLimitReached: { limit in /* STREAM_LIMIT, DEVICE_LIMIT, … */ },
+    onClose: { /* the viewer closed the player */ }
+))
+```
+
+Or present `EYZFlowPlayerViewController(options:)` yourself. It shows a
+spinner while the key check and the playback session run, then AVKit's
+player, and a message with a Close button when playback is refused or fails.
+`EYZFlowPlayback` is the same without UI, for an app with its own player
+screen: it gives you the `AVPlayer`.
+
+Watch progress goes to a `WatchProgressStore` you implement, for example with
+your call to the EYZFlow watch-history API:
+
+```swift
+struct MyWatchHistory: WatchProgressStore {
+    func save(catalogueID: String, progressSeconds: Double, completed: Bool) async throws {
+        try await api.saveProgress(catalogueID, progressSeconds, completed)
+    }
+}
+```
+
+Films save their position every 10 seconds while playing, on a pause, a seek
+and when the app leaves, and as completed at the end. Trailers save nothing.
+
+### Host setup
+
+- **Picture in Picture:** add the `audio` background mode
+  (`UIBackgroundModes`) to your app. When the viewer starts it, the player
+  screen closes and the app is usable while the film plays on; tapping the
+  window's restore button brings the player back.
+- **Player key:** add your app's bundle id to the key's allowed apps, with the
+  platform `ios` or `tvos`.
+
 ## Targets
 
 | Target | What |
 | --- | --- |
 | `EYZFlowPlayerCore` | Foundation only (no UIKit, no AVFoundation). Everything below. |
-| `EYZFlowPlayer` | The library product. Re-exports `EYZFlowPlayerCore`; the AVKit player will live here. |
+| `EYZFlowPlayer` | The library product: the AVKit player (`EYZFlowPlayerViewController`, `EYZFlowPlayback`, FairPlay). Re-exports `EYZFlowPlayerCore`. |
 | `EYZFlowPlayerCoreTests` | Swift Testing suites, ported from the Flutter package's tests. |
 
 ## API
@@ -122,17 +165,19 @@ The same rules as the EYZFlow web player and the Flutter package
 defaults, codes and viewer messages are the same, and the tests use the same
 fixtures and expectations.
 
-## Still to come
+## Not yet
 
-The player itself, built in this package on AVKit:
+- Google Cast. The EYZFlow Cast receiver (`A534F914`) is ready; the sender
+  side needs Google's Cast SDK.
+- Player configs (`configID`) are loaded for the key check but do not style
+  AVKit's player.
 
-- playback in `AVPlayerViewController`,
-- FairPlay through `AVContentKeySession` (certificate and licence URLs from
-  `EYZFlowSource`, the coordinator's access header on licence
-  requests),
-- AirPlay and Picture in Picture from AVKit,
-- tvOS scrubbing previews from the streams' I-frame playlists,
-- Google Cast later (receiver app id `A534F914`).
+## Example
+
+`Example/EYZFlowPlayerExample.xcodeproj` is a loader app for iPhone, iPad and
+Apple TV: a stream id, the viewer's token, a storefront and a player key, and
+a log of every playback event. For a device, put your Apple team in
+`Example/Config/Team.xcconfig` (git-ignored): `DEVELOPMENT_TEAM = <team id>`.
 
 ## Develop
 

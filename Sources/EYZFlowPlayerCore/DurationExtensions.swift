@@ -8,7 +8,7 @@ extension Duration {
     }
 
     /// Seconds with the fraction.
-    var inSecondsDouble: Double {
+    public var inSecondsDouble: Double {
         let (seconds, attoseconds) = components
         return Double(seconds) + Double(attoseconds) / 1e18
     }
