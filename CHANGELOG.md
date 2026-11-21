@@ -1,30 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
 
-### Added
+First release.
 
-- Chromecast on iPhone and iPad, with no Google Cast SDK: Bonjour discovery,
-  the Cast protocol over TLS (`CastChannel`, `NetworkCastBackend`), and
-  `CastController` (connect with one retry, load timeout, how casting ends).
-  The player shows a Cast button when a TV is found, hands the film to the
-  EYZFlow receiver at the current position with the phone's access token,
-  shows a casting screen, and takes the film back at the TV's position.
-  `EYZFlowPlayerOptions.castReceiverAppID` (default `A534F914`, nil turns it
-  off) and `poster`.
-- `EYZFlowPlayer`: the AVKit player. `EYZFlowPlayerViewController` and
-  `EYZFlowPlayer.present(_:from:)` play a stream full screen in
-  `AVPlayerViewController` with FairPlay (`AVContentKeySession`), AirPlay,
-  Picture in Picture, resume and the limit and key error screens;
-  `EYZFlowPlayback` is the same without UI.
-- `PlaybackEventTracker`: the player's state turned into `PlaybackEvent`s,
-  which feed the beats and `EYZFlowPlayerOptions.onEvent`.
-- `WatchProgressStore` and `WatchProgressRecorder`: a film's watch progress.
-- `FairPlayLicenseFormat`: the FairPlay licence wire format.
+- `EYZFlowPlayer.present(_:from:)` and `EYZFlowPlayerViewController`: EYZFlow
+  streams full screen in AVKit's player on iPhone, iPad and Apple TV, with
+  FairPlay, AirPlay, Picture in Picture, resume, and the limit and key error
+  screens. `EYZFlowPlayback` is the same without UI.
+- Chromecast on iPhone and iPad to the EYZFlow Cast receiver, with no Google
+  Cast SDK: a Cast button, a casting screen, and the hand-over at the current
+  position in both directions.
+- The EYZFlow rules, the same as the web player and the Flutter package
+  `eyzflow_player`: the player key check, playback sessions for stream and
+  device limits, playback quality analytics, and watch progress for films
+  (`WatchProgressStore`).
 - `Example/`: a loader app for iPhone, iPad and Apple TV.
-- `EYZFlowPlayerCore`: the EYZFlow playback rules, ported from the Flutter
-  package `eyzflow_player`: player key check and renewal, playback
-  sessions, DRM access token, device id (`UserDefaults`, `eyzflow.deviceId`),
-  analytics beats, player configs, WebVTT thumbnail tracks, the stream source
-  model, and `PlaybackCoordinator` with `PlaybackEvent`.
-- Tests ported from the Flutter package (Swift Testing).
