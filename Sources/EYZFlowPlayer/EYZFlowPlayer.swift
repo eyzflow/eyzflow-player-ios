@@ -1,12 +1,8 @@
-// The EYZFlow player for iOS and tvOS apps.
+// The EYZFlow player for iOS, iPadOS and tvOS apps.
 //
-// For now this target only re-exports EYZFlowPlayerCore: the EYZFlow rules
-// around playback (player key check, playback sessions, DRM access token,
-// analytics beats, player configs, thumbnail tracks, and the coordinator that
-// runs them in order).
-//
-// The player itself will be built here on AVKit: AVPlayerViewController,
-// FairPlay through AVContentKeySession, AirPlay and Picture in Picture from
-// AVKit, tvOS scrubbing previews from the streams' I-frame playlists, and
-// Google Cast later.
+// `EYZFlowPlayerViewController` (or `EYZFlowPlayer.present(_:from:)`) plays a
+// stream full screen in AVKit's player, with FairPlay, AirPlay and Picture in
+// Picture; `EYZFlowPlayback` is the same without UI. Both run the EYZFlow rules
+// from `EYZFlowPlayerCore`, re-exported here: player key check, playback
+// sessions, DRM access token, analytics beats and watch progress.
 @_exported import EYZFlowPlayerCore
