@@ -15,6 +15,8 @@ public final class EYZFlowPlayback {
         case loading
         /// The player has the stream; show `player`.
         case playing
+        /// A TV plays it; the phone shows the casting screen.
+        case casting
         /// Stopped with a viewer-facing message.
         case failed(message: String)
         /// Closed.
@@ -41,6 +43,8 @@ public final class EYZFlowPlayback {
     private var timeObserver: Any?
     private var lastTickPosition: Duration = .zero
     private var resumed = false
+    private var resumeSeconds: Double?
+    private var accessHeader: String?
 
     public init(options: EYZFlowPlayerOptions) {
         self.options = options
@@ -83,7 +87,8 @@ public final class EYZFlowPlayback {
         guard state == .loading else { return }
         switch coordinator.status {
         case .ready(let accessHeader):
-            mount(accessHeader: accessHeader)
+            self.accessHeader = accessHeader
+            mount(from: options.progressSeconds)
         case .failed(let failure):
             stop(with: failure.message)
         case .loading:
@@ -95,9 +100,9 @@ public final class EYZFlowPlayback {
     /// the session closed. Safe to call more than once.
     public func close() async {
         if state == .closed { return }
-        let wasPlaying = player != nil
+        let wasPlaying = player != nil || state == .casting
         player?.pause()
-        if wasPlaying { recorder?.checkpoint(tracker.position) }
+        if wasPlaying { recorder?.checkpoint(player != nil ? currentPosition : tracker.position) }
         tracker.close()
         teardown()
         state = .closed
@@ -107,15 +112,64 @@ public final class EYZFlowPlayback {
 
     /// The app went to the background: save the position and send a beat.
     public func didEnterBackground() {
-        guard player != nil else { return }
-        recorder?.checkpoint(currentPosition)
+        guard player != nil || state == .casting else { return }
+        recorder?.checkpoint(player != nil ? currentPosition : tracker.position)
         coordinator.onBackgrounded()
+    }
+
+    // MARK: Casting
+
+    /// Hands playback to a TV: the phone's player stops where it is, and the
+    /// returned media starts there on the TV with the phone's access token (so
+    /// the TV counts as the phone's one stream). Nil when nothing plays.
+    public func handOverToCast() -> CastMedia? {
+        guard state == .playing, let player else { return nil }
+        let position = currentPosition
+        player.pause()
+        tracker.update(isReady: true, isPlaying: false, isBuffering: false, position: position, duration: currentDuration)
+        recorder?.checkpoint(position)
+        teardown()
+        state = .casting
+        return CastMedia.for(options.source, startAt: position, accessHeader: accessHeader)
+    }
+
+    /// What the TV reports while casting: it feeds the events, the beats and
+    /// watch progress, as the phone's player would.
+    public func castReported(_ playback: CastPlayback) {
+        guard state == .casting else { return }
+        tracker.update(
+            isReady: true,
+            isPlaying: playback.state == .playing,
+            isBuffering: playback.state == .buffering,
+            position: playback.position,
+            duration: playback.duration
+        )
+        if playback.state == .playing { recorder?.report(playback.position) }
+    }
+
+    /// Casting ended. The film ending on the TV completes it; otherwise the
+    /// phone plays on from where the TV was. `failure` is the viewer-facing
+    /// text when the TV could not play it.
+    public func castEnded(_ reason: CastEndReason, at position: Duration, failure: String? = nil) {
+        guard state == .casting else { return }
+        if reason == .finished {
+            tracker.reachedEnd(position: position, duration: tracker.duration)
+            recorder?.finish()
+            return
+        }
+        if let failure { tracker.failed(message: failure) }
+        recorder?.checkpoint(position)
+        mount(from: position.inSecondsDouble)
     }
 
     // MARK: Mounting
 
-    private func mount(accessHeader: String?) {
+    private func mount(from seconds: Double?) {
         let source = options.source
+        resumeSeconds = seconds
+        resumed = false
+        groupsRequested = false
+        lastTickPosition = .milliseconds(Int64((seconds ?? 0) * 1000))
         let asset = AVURLAsset(url: source.hlsStreamURL)
         if let accessHeader {
             let loader = FairPlayKeyLoader(
@@ -252,7 +306,7 @@ public final class EYZFlowPlayback {
     private func resumeIfNeeded() {
         guard !resumed else { return }
         resumed = true
-        guard let seconds = options.progressSeconds, seconds > 0, let player else { return }
+        guard let seconds = resumeSeconds, seconds > 0, let player else { return }
         // Not into the last seconds: resuming there would end at once.
         if let duration = currentDuration?.inSecondsDouble, seconds >= duration - 5 { return }
         let target = CMTime(seconds: seconds, preferredTimescale: 600)

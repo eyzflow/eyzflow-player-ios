@@ -9,6 +9,8 @@ rules built in, the same as the EYZFlow web player and the Flutter package
 - **FairPlay** through `AVContentKeySession`, with the viewer's DRM access token,
 - **AirPlay**, **Picture in Picture**, subtitle and audio menus from AVKit, and
   on Apple TV the scrubbing previews from the streams' I-frame playlists,
+- **Chromecast** on iPhone and iPad, to the EYZFlow Cast receiver, with no
+  Google Cast SDK,
 - the **player key check** (`POST /v1/player/license`) and its renewal,
 - **playback sessions** for the plan's stream and device limits, with the
   same messages as the web and Flutter players,
@@ -75,6 +77,22 @@ and when the app leaves, and as completed at the end. Trailers save nothing.
   window's restore button brings the player back.
 - **Player key:** add your app's bundle id to the key's allowed apps, with the
   platform `ios` or `tvos`.
+- **Chromecast:** add to your Info.plist
+
+  ```xml
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Finds TVs on your network to play films on.</string>
+  <key>NSBonjourServices</key>
+  <array><string>_googlecast._tcp</string></array>
+  ```
+
+  The player looks for TVs once the film plays (the first time, iOS asks the
+  viewer for the Local Network permission) and shows a Cast button when it
+  finds one. Casting hands the film over at the current position; the phone
+  shows the TV's progress, play/pause, a seek bar and Stop casting, and the
+  playback session, analytics and watch progress carry on. Stopping hands
+  the film back to the phone where the TV was. `castReceiverAppID: nil`
+  turns Chromecast off.
 
 ## Targets
 
@@ -167,8 +185,6 @@ fixtures and expectations.
 
 ## Not yet
 
-- Google Cast. The EYZFlow Cast receiver (`A534F914`) is ready; the sender
-  side needs Google's Cast SDK.
 - Player configs (`configID`) are loaded for the key check but do not style
   AVKit's player.
 
