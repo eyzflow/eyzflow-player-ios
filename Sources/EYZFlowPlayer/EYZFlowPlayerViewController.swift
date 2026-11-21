@@ -154,6 +154,10 @@ public final class EYZFlowPlayerViewController: UIViewController {
             // From here on, this screen showing again means AVKit's player
             // was dismissed.
             self?.playerShown = true
+            #if os(iOS)
+                // After AVKit laid out its own controls, so it sits above them.
+                self?.addCastButton(to: controller)
+            #endif
         }
     }
 
@@ -166,7 +170,6 @@ public final class EYZFlowPlayerViewController: UIViewController {
             controller.allowsPictureInPicturePlayback = true
             controller.canStartPictureInPictureAutomaticallyFromInline = true
             controller.entersFullScreenWhenPlaybackBegins = false
-            addCastButton(to: controller)
         #endif
         return controller
     }
@@ -266,16 +269,25 @@ extension EYZFlowPlayerViewController {
         cast.onEnded = { [weak self] reason, position in self?.castEnded(reason, at: position) }
     }
 
-    /// Looks for TVs once, when the film first plays.
+    /// Looks for TVs from when the film first plays, every 10 s until one is
+    /// found: the first scan also asks for the Local Network permission and
+    /// usually ends before the viewer answers.
     private func scanForCastDevicesOnce() {
         guard let cast, !castScanned else { return }
         castScanned = true
-        Task { await cast.scan() }
+        Task { [weak self] in
+            while let self, !self.finished, cast.devices.isEmpty {
+                await cast.scan()
+                if !cast.devices.isEmpty { break }
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
     }
 
     private func castChanged() {
         guard let cast else { return }
         castButton.isHidden = cast.devices.isEmpty || cast.isCasting
+        castButton.superview?.bringSubviewToFront(castButton)
         if playback.state == .casting { castingView.render(cast.state) }
     }
 
