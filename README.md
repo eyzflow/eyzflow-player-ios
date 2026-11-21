@@ -23,7 +23,7 @@ dependencies.
 ## Install
 
 ```swift
-.package(url: "https://github.com/eyzflow/eyzflow-player-ios", branch: "main"),
+.package(url: "https://github.com/eyzflow/eyzflow-player-ios", from: "0.1.0"),
 // …
 .product(name: "EYZFlowPlayer", package: "EYZFlowPlayer"),
 ```
