@@ -38,8 +38,21 @@ public final class EYZFlowPlayerViewController: UIViewController {
     private let messageLabel = UILabel()
     private let closeButton = UIButton(type: .system)
 
+    #if os(iOS)
+    /// Chromecast: nil when the options turn it off.
+    private var cast: CastController?
+    private var castScanned = false
+    private let castButton = UIButton(type: .system)
+    private let castingView = CastingView()
+    #endif
+
     public init(options: EYZFlowPlayerOptions) {
         playback = EYZFlowPlayback(options: options)
+        #if os(iOS)
+            if options.castReceiverAppID != nil {
+                cast = CastController(backend: NetworkCastBackend())
+            }
+        #endif
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
     }
@@ -60,6 +73,9 @@ public final class EYZFlowPlayerViewController: UIViewController {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.playback.didEnterBackground() }
         }
+        #if os(iOS)
+            setUpCast()
+        #endif
         Task { await playback.start() }
     }
 
@@ -67,6 +83,8 @@ public final class EYZFlowPlayerViewController: UIViewController {
         super.viewDidAppear(animated)
         guard !finished else { return }
         appeared = true
+        // AVKit's player was dismissed to hand playback to a TV.
+        if playback.state == .casting { return }
         guard let playerController, playerShown else {
             // First appearance: the stream may be ready already.
             if playback.state == .playing { presentPlayer() }
@@ -101,6 +119,10 @@ public final class EYZFlowPlayerViewController: UIViewController {
             spinner.stopAnimating()
             messageLabel.isHidden = true
             closeButton.isHidden = false
+            #if os(iOS)
+                castingView.isHidden = true
+                scanForCastDevicesOnce()
+            #endif
             // Only once this screen is on: presenting during its own
             // presentation is refused.
             if appeared { presentPlayer() }
@@ -114,6 +136,10 @@ public final class EYZFlowPlayerViewController: UIViewController {
             }
             playerController = nil
             playerShown = false
+        case .casting:
+            spinner.stopAnimating()
+            messageLabel.isHidden = true
+            closeButton.isHidden = false
         case .closed:
             spinner.stopAnimating()
         }
@@ -121,12 +147,17 @@ public final class EYZFlowPlayerViewController: UIViewController {
 
     private func presentPlayer() {
         guard !finished, appeared, presentedViewController == nil, let player = playback.player else { return }
-        let controller = playerController ?? makePlayerController(player)
+        // After casting the phone plays a new player.
+        let controller = playerController?.player === player ? playerController! : makePlayerController(player)
         playerController = controller
         present(controller, animated: false) { [weak self] in
             // From here on, this screen showing again means AVKit's player
             // was dismissed.
             self?.playerShown = true
+            #if os(iOS)
+                // After AVKit laid out its own controls, so it sits above them.
+                self?.addCastButton(to: controller)
+            #endif
         }
     }
 
@@ -150,6 +181,11 @@ public final class EYZFlowPlayerViewController: UIViewController {
         PictureInPictureKeeper.release(self)
         if let backgroundToken { NotificationCenter.default.removeObserver(backgroundToken) }
         let onClose = playback.options.onClose
+        #if os(iOS)
+            // A film left playing on the TV would stay counted against the plan.
+            cast?.stop()
+            cast?.dispose()
+        #endif
         Task {
             await playback.close()
             if presentingViewController != nil {
@@ -186,6 +222,17 @@ public final class EYZFlowPlayerViewController: UIViewController {
         closeButton.accessibilityLabel = NSLocalizedString("Close", comment: "Closes the player")
         closeButton.addTarget(self, action: #selector(closeTapped), for: .primaryActionTriggered)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
+        #if os(iOS)
+            castingView.isHidden = true
+            castingView.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(castingView)
+            NSLayoutConstraint.activate([
+                castingView.topAnchor.constraint(equalTo: view.topAnchor),
+                castingView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                castingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                castingView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ])
+        #endif
         view.addSubview(closeButton)
 
         let guide = view.safeAreaLayoutGuide
@@ -200,6 +247,121 @@ public final class EYZFlowPlayerViewController: UIViewController {
         ])
     }
 }
+
+// MARK: - Chromecast
+
+#if os(iOS)
+extension EYZFlowPlayerViewController {
+    private func setUpCast() {
+        guard let cast else { return }
+        castingView.onPlayPause = { [weak self] in
+            guard let cast = self?.cast else { return }
+            if case .active(_, let playback) = cast.state, playback.state == .playing {
+                cast.pause()
+            } else {
+                cast.play()
+            }
+        }
+        castingView.onSeek = { [weak self] position in self?.cast?.seek(to: position) }
+        castingView.onStop = { [weak self] in self?.cast?.stop() }
+        cast.onChange = { [weak self] in self?.castChanged() }
+        cast.onPlayback = { [weak self] playback in self?.playback.castReported(playback) }
+        cast.onEnded = { [weak self] reason, position in self?.castEnded(reason, at: position) }
+    }
+
+    /// Looks for TVs from when the film first plays, every 10 s until one is
+    /// found: the first scan also asks for the Local Network permission and
+    /// usually ends before the viewer answers.
+    private func scanForCastDevicesOnce() {
+        guard let cast, !castScanned else { return }
+        castScanned = true
+        Task { [weak self] in
+            while let self, !self.finished, cast.devices.isEmpty {
+                await cast.scan()
+                if !cast.devices.isEmpty { break }
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
+    }
+
+    private func castChanged() {
+        guard let cast else { return }
+        castButton.isHidden = cast.devices.isEmpty || cast.isCasting
+        castButton.superview?.bringSubviewToFront(castButton)
+        if playback.state == .casting { castingView.render(cast.state) }
+    }
+
+    /// The Cast button, over AVKit's player. AVKit has no place for it in its
+    /// own controls on iPhone, so it sits in the top trailing corner, below
+    /// AVKit's top bar.
+    private func addCastButton(to controller: AVPlayerViewController) {
+        guard cast != nil else { return }
+        var configuration = UIButton.Configuration.filled()
+        configuration.image = UIImage(systemName: "tv.badge.wifi")
+        configuration.baseForegroundColor = .white
+        configuration.baseBackgroundColor = UIColor(white: 0, alpha: 0.45)
+        configuration.cornerStyle = .capsule
+        castButton.configuration = configuration
+        castButton.accessibilityLabel = NSLocalizedString("Cast to a TV", comment: "Opens the Chromecast picker")
+        castButton.removeTarget(nil, action: nil, for: .allEvents)
+        castButton.addTarget(self, action: #selector(castTapped), for: .primaryActionTriggered)
+        castButton.isHidden = cast?.devices.isEmpty ?? true
+        castButton.removeFromSuperview()
+        castButton.translatesAutoresizingMaskIntoConstraints = false
+        controller.view.addSubview(castButton)
+        let guide = controller.view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            castButton.topAnchor.constraint(equalTo: guide.topAnchor, constant: 64),
+            castButton.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
+        ])
+    }
+
+    @objc private func castTapped() {
+        guard let cast, let presenter = playerController else { return }
+        let picker = UIAlertController(
+            title: NSLocalizedString("Cast to", comment: "Chromecast picker title"),
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+        for target in cast.devices {
+            picker.addAction(UIAlertAction(title: target.name, style: .default) { [weak self] _ in
+                self?.startCasting(to: target)
+            })
+        }
+        picker.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: "Closes the picker"), style: .cancel))
+        picker.popoverPresentationController?.sourceView = castButton
+        picker.popoverPresentationController?.sourceRect = castButton.bounds
+        presenter.present(picker, animated: true)
+    }
+
+    private func startCasting(to target: CastTarget) {
+        guard let cast, let appID = playback.options.castReceiverAppID,
+              let media = playback.handOverToCast() else { return }
+        castingView.show(title: playback.options.title, poster: playback.options.poster)
+        castingView.render(.connecting(target))
+        castingView.isHidden = false
+        view.bringSubviewToFront(closeButton)
+        presentedViewController?.dismiss(animated: true)
+        Task { await cast.cast(media, to: target, appID: appID) }
+    }
+
+    private func castEnded(_ reason: CastEndReason, at position: Duration) {
+        // Closing the player stops casting too; nothing to hand back then.
+        guard !finished else { return }
+        var failure: String?
+        if reason == .failed, case .failed(let target, _) = cast?.state {
+            failure = String(format: NSLocalizedString("Could not play on %@", comment: "Casting failed"), target.name)
+        }
+        playback.castEnded(reason, at: position, failure: failure)
+        if reason == .finished {
+            finish()
+            return
+        }
+        if let failure { playback.options.onError?(failure) }
+        // The phone plays on where the TV was (`render(.playing)`).
+    }
+}
+#endif
 
 // MARK: - AVPlayerViewControllerDelegate
 

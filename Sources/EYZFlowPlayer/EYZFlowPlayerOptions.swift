@@ -8,6 +8,8 @@ public struct EYZFlowPlayerOptions: Sendable {
     public var streamID: String
     public var title: String
     public var description: String?
+    /// Shown while casting and on the TV.
+    public var poster: URL?
     /// A film plays with FairPlay and a playback session; a trailer, or nil,
     /// plays clear.
     public var sourceType: EYZFlowSourceType?
@@ -36,6 +38,9 @@ public struct EYZFlowPlayerOptions: Sendable {
     public var watchProgressStore: (any WatchProgressStore)?
     /// Start playing as soon as the stream is ready.
     public var autoplay: Bool
+    /// The Cast receiver films play on: the EYZFlow receiver by default. Nil
+    /// turns Chromecast off. iPhone and iPad only.
+    public var castReceiverAppID: String?
 
     /// Every playback event, in order.
     public var onEvent: (@MainActor @Sendable (PlaybackEvent) -> Void)?
@@ -52,6 +57,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         streamID: String,
         title: String,
         description: String? = nil,
+        poster: URL? = nil,
         sourceType: EYZFlowSourceType? = nil,
         progressSeconds: Double? = nil,
         playerKey: String? = nil,
@@ -64,6 +70,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         analytics: Bool = true,
         watchProgressStore: (any WatchProgressStore)? = nil,
         autoplay: Bool = true,
+        castReceiverAppID: String? = eyzflowCastReceiverAppID,
         onEvent: (@MainActor @Sendable (PlaybackEvent) -> Void)? = nil,
         onLimitReached: (@MainActor @Sendable (PlaybackLimitError) -> Void)? = nil,
         onLicenseError: (@MainActor @Sendable (PlayerLicenseError) -> Void)? = nil,
@@ -73,6 +80,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         self.streamID = streamID
         self.title = title
         self.description = description
+        self.poster = poster
         self.sourceType = sourceType
         self.progressSeconds = progressSeconds
         self.playerKey = playerKey
@@ -85,6 +93,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         self.analytics = analytics
         self.watchProgressStore = watchProgressStore
         self.autoplay = autoplay
+        self.castReceiverAppID = castReceiverAppID
         self.onEvent = onEvent
         self.onLimitReached = onLimitReached
         self.onLicenseError = onLicenseError
@@ -98,6 +107,7 @@ public struct EYZFlowPlayerOptions: Sendable {
             id: streamID,
             title: title,
             description: description,
+            poster: poster,
             sourceType: sourceType,
             progressSeconds: progressSeconds
         )

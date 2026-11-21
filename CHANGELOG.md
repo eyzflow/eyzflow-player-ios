@@ -4,6 +4,14 @@
 
 ### Added
 
+- Chromecast on iPhone and iPad, with no Google Cast SDK: Bonjour discovery,
+  the Cast protocol over TLS (`CastChannel`, `NetworkCastBackend`), and
+  `CastController` (connect with one retry, load timeout, how casting ends).
+  The player shows a Cast button when a TV is found, hands the film to the
+  EYZFlow receiver at the current position with the phone's access token,
+  shows a casting screen, and takes the film back at the TV's position.
+  `EYZFlowPlayerOptions.castReceiverAppID` (default `A534F914`, nil turns it
+  off) and `poster`.
 - `EYZFlowPlayer`: the AVKit player. `EYZFlowPlayerViewController` and
   `EYZFlowPlayer.present(_:from:)` play a stream full screen in
   `AVPlayerViewController` with FairPlay (`AVContentKeySession`), AirPlay,

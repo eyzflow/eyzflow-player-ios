@@ -7,5 +7,12 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<!-- Chromecast: finding TVs on the network. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Finds TVs on your network to play films on.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_googlecast._tcp</string>
+	</array>
 </dict>
 </plist>
