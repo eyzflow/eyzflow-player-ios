@@ -94,6 +94,7 @@ struct LoaderView: View {
     private func add(_ line: String) {
         let time = Date.now.formatted(date: .omitted, time: .standard)
         log.insert("\(time)  \(line)", at: 0)
+        NSLog("[example] %@", line)
     }
 }
 

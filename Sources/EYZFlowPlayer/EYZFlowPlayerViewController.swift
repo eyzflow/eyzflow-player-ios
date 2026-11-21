@@ -27,6 +27,8 @@ public final class EYZFlowPlayerViewController: UIViewController {
     public let playback: EYZFlowPlayback
 
     private var playerController: AVPlayerViewController?
+    private var appeared = false
+    private var playerShown = false
     private var finished = false
     private var pictureInPictureActive = false
     private var restoringFromPictureInPicture = false
@@ -64,7 +66,8 @@ public final class EYZFlowPlayerViewController: UIViewController {
     override public func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard !finished else { return }
-        guard let playerController else {
+        appeared = true
+        guard let playerController, playerShown else {
             // First appearance: the stream may be ready already.
             if playback.state == .playing { presentPlayer() }
             return
@@ -98,7 +101,9 @@ public final class EYZFlowPlayerViewController: UIViewController {
             spinner.stopAnimating()
             messageLabel.isHidden = true
             closeButton.isHidden = false
-            if viewIfLoaded?.window != nil { presentPlayer() }
+            // Only once this screen is on: presenting during its own
+            // presentation is refused.
+            if appeared { presentPlayer() }
         case .failed(let message):
             spinner.stopAnimating()
             messageLabel.text = message
@@ -108,16 +113,21 @@ public final class EYZFlowPlayerViewController: UIViewController {
                 presented.dismiss(animated: true)
             }
             playerController = nil
+            playerShown = false
         case .closed:
             spinner.stopAnimating()
         }
     }
 
     private func presentPlayer() {
-        guard !finished, presentedViewController == nil, let player = playback.player else { return }
+        guard !finished, appeared, presentedViewController == nil, let player = playback.player else { return }
         let controller = playerController ?? makePlayerController(player)
         playerController = controller
-        present(controller, animated: false)
+        present(controller, animated: false) { [weak self] in
+            // From here on, this screen showing again means AVKit's player
+            // was dismissed.
+            self?.playerShown = true
+        }
     }
 
     private func makePlayerController(_ player: AVPlayer) -> AVPlayerViewController {
