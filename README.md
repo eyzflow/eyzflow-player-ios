@@ -250,7 +250,9 @@ fixtures and expectations.
 `Example/EYZFlowPlayerExample.xcodeproj` is a loader app for iPhone, iPad and
 Apple TV: a stream id, the viewer's token, a storefront and a player key, and
 a log of every playback event, and an Ad tag URL field that turns ads on
-(Google's sample tags work). For a device, put your Apple team in
+(Google's sample tags work). The launch environment can fill it in:
+`EYZFLOW_STREAM_ID`, `EYZFLOW_AD_TAG`, and `EYZFLOW_AUTOPLAY=1` to play at once.
+For a device, put your Apple team in
 `Example/Config/Team.xcconfig` (git-ignored): `DEVELOPMENT_TEAM = <team id>`.
 
 ## Develop

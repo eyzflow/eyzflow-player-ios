@@ -58,6 +58,12 @@ struct LoaderView: View {
             }
             .navigationTitle("EYZFlow Player")
         }
+        .task {
+            // Launch with EYZFLOW_AUTOPLAY=1 to play at once, for device checks.
+            guard ProcessInfo.processInfo.environment["EYZFLOW_AUTOPLAY"] == "1", !streamID.trimmed.isEmpty else { return }
+            try? await Task.sleep(for: .seconds(1))
+            play()
+        }
     }
 
     private func field(_ label: String, text: Binding<String>) -> some View {
