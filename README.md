@@ -151,6 +151,18 @@ countdown, skip button and click-through over the player.
 - During an ad AVKit's controls, Picture in Picture and the Cast button are
   off. No ads play on AirPlay or while casting, and when casting hands the
   film back, neither the pre-roll nor a break already played plays again.
+- **Countdown before a mid-roll:** a small corner notice, "Ad in 5" … "Ad
+  in 1", for the last 5 s before each mid-roll (never a pre-roll or
+  post-roll), in en, de, fr or nl by the device language, English otherwise.
+  It counts towards the unplayed markers (a marker passed by seeking gets it
+  again when approached later), or on a stream without markers towards a
+  VMAP's mid-roll cue points (one played through does not come back after a
+  rewind). It hides while paused, seeking, during an ad, on AirPlay or
+  casting, and when the viewer seeks past the break. It takes no touches;
+  VoiceOver reads it. Only when ads play for the viewer. `features.adCountdown`
+  in the config turns it off (`false`); missing means on, for configs saved
+  before it. `playback.showsAdCountdown` changes it while playing, without
+  reloading the stream.
 - Apple TV plays no ads (IMA for tvOS is a separate SDK).
 - `EYZFlowPlayback` on its own (an app with its own player UI) plays no
   ads: they need the player screen's ad layer.
@@ -234,6 +246,7 @@ code (`DEVICE_LIMIT`, `APP_NOT_ALLOWED`, …) fails with that code.
 | `PlaybackEventAdapter` | Feeds `PlaybackEvent`s into a `BeatCollector`. |
 | `PlayerConfig`, `PlayerConfigOverride`, `mergePlayerConfig(_:_:)`, `PlayerConfigClient` | Dashboard configs, merged with an inline override; loaded once per API origin and id, nil (the defaults) on failure or after 5 s. |
 | `PlayerConfig.adTagToPlay`, `adTagForPlayback(configTag:planAds:targeting:)`, `adTagWithTargeting(_:_:)`, `PlayerAds`, `AdBreakScheduler`, `AdDriver` | The ad gate (the config and the viewer's plan), the tag's `cust_params` targeting, and when ads play (IMA-free; the player's IMA driver does the SDK work). |
+| `AdCountdown`, `AdCuePointSchedule` | The countdown before a mid-roll: seconds left (5 … 1) to the nearest break ahead, a VMAP's mid-roll cue points, and the notice's text. |
 | `AdBreak`, `AdBreakSchedule`, `parseHLSAdBreaks(_:)`, `loadHLSAdBreaks(http:master:)` | Ad break markers from the HLS playlists; each played once, none passed by seeking. |
 | `ThumbnailTrack`, `ThumbnailLoader` | WebVTT thumbnail tracks, `at(position)`, loaded once per URL. |
 | `EYZFlowSource`, `EYZFlowSourceType` | The stream source: id, title, poster, DRM header, film or trailer, progress, and its HLS, DASH, FairPlay, Widevine and thumbnail URLs. |
@@ -255,7 +268,6 @@ fixtures and expectations.
 
 - Player configs (`configID`) give the key check and the ads, but do not
   style AVKit's player.
-- No "ad in 5 s" notice before a mid-roll.
 
 ## Example
 

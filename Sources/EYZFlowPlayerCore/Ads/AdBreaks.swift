@@ -188,6 +188,13 @@ public struct AdBreakSchedule: Sendable {
 
     public var breaks: [AdBreak] { byID.values.sorted { ($0.start, $0.id) < ($1.start, $1.id) } }
 
+    /// Starts of the mid-roll breaks not played yet, in order: what the
+    /// countdown before a break counts towards. A break passed by seeking
+    /// stays here, as it still plays when playback reaches it later.
+    public var upcomingMidrollStarts: [Duration] {
+        breaks.filter { $0.start > adPrerollWindow && !played.contains($0.id) }.map(\.start)
+    }
+
     /// The pre-roll break, if the stream has one not yet played; marked as
     /// played.
     public mutating func takePreroll() -> AdBreak? {
