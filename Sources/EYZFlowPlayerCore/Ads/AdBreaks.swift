@@ -154,19 +154,7 @@ public func loadHLSAdBreaks(
     master: URL,
     timeout: Duration = .seconds(5)
 ) async -> [AdBreak] {
-    func get(_ url: URL) async -> String? {
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = timeout.inSecondsDouble
-        guard let (data, response) = try? await http.send(request), response.statusCode == 200 else { return nil }
-        return String(decoding: data, as: UTF8.self)
-    }
-    guard let body = await get(master) else { return [] }
-    let own = parseHLSAdBreaks(body)
-    if !own.isEmpty || !body.contains("#EXT-X-STREAM-INF") { return own }
-    guard let first = hlsMediaPlaylistURLs(body, master: master).first,
-          let playlist = await get(first) else { return [] }
-    return parseHLSAdBreaks(playlist)
+    await loadHLSMarkers(http: http, master: master, timeout: timeout).adBreaks
 }
 
 /// The stream's ad breaks, each played at most once per impression.

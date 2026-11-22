@@ -183,6 +183,82 @@ countdown, skip button and click-through over the player.
   one that turns out to have no ad. Analytics count the content only: ad
   time is neither played, paused nor startup time.
 
+### Skip intro, recap and credits
+
+The intro, recap, opening and closing credits marked on a stream in the
+dashboard (Stream → Signals) are read from its HLS playlist, in the same
+fetch as the ad markers, with or without ads.
+
+- **iPhone and iPad:** while playback is in one, a "Skip intro", "Skip recap"
+  or "Skip credits" button shows over the player, above AVKit's bar. A tap
+  seeks to the signal's end, never before it (the first keyframe at or
+  after it), or to the end of the film, which ends it. It hides during an ad
+  break; the ad countdown moves up above it when both show. It takes the
+  config's theme: `controlsBarColor`, `textColor` and `borderRadius`.
+- **Apple TV:** the same through AVKit's own skip button
+  (`contextualActions`), over the transport bar, which the Siri Remote
+  focuses.
+- Text in en, de, fr or nl by the device language, English otherwise.
+- `features.skipButtons: false` in the config hides the button; missing
+  means on. The events still come.
+- `skipButtonTypes` picks the types with a button (`intro`, `recap`,
+  `openingCredits`, `closingCredits`): by default all but the closing
+  credits, where skipping only ends the film. Types left out keep their
+  default; an inline `PlayerConfigOverride(skipButtonTypes:)` wins per type.
+- Events: `signalStarted` and `signalEnded`, with the `StreamSignal` (type,
+  start, end, label), and `EYZFlowPlayerOptions.onSignal` (the signal, then
+  nil), e.g. to offer the next episode when `.closingCredits` starts.
+  `EYZFlowPlayback.skipSignal()` and `activeSignal` are for an app with its
+  own player UI.
+- The dashboard's `label` is passed on, not shown.
+
+### End screen
+
+Pass films and the next stream, and the player shows a Netflix-like end
+screen over the closing credits (the video shrinks into a corner) and after
+the film:
+
+```swift
+let next = EndScreenItem(streamID: "…", title: "Episode 2", poster: posterURL, duration: .seconds(2700), badge: "S1 E2")
+let options = EYZFlowPlayerOptions(
+    streamID: streamID,
+    title: "Episode 1",
+    sourceType: .film(catalogueID: catalogueID),
+    endScreen: EYZFlowEndScreen(
+        items: [next, similarFilm, otherFilm],
+        nextUp: next,
+        onSelect: { selection in
+            // selection.item, selection.autoplay; preventDefault() to handle it yourself
+        }
+    )
+)
+```
+
+- **Up next** counts down (`autoplaySeconds`, 10 by default, 0 for none)
+  and plays the next stream; Cancel stops the countdown. Any film in the
+  row plays on tap (Apple TV: select).
+- A pick plays **in place**, in the same AVKit player: the old playback is
+  closed (position saved, last beat, session closed) and the new one runs
+  its own key check, session and FairPlay. A film picked during a film
+  plays as a film unless the item has its own `sourceType`.
+- **When:** over the closing credits signal; on a stream without one, the
+  last `secondsBeforeEnd` seconds (20 by default, 0 for only at the end);
+  and after the end. `showAt: .end` shows it only after the end.
+- **Back:** "Back to credits", a tap on the small video, or Menu on Apple
+  TV hides it until the film ends. On iPhone and iPad the close button
+  closes the player.
+- Remote config: `features.endScreen: false` turns it off; the `endScreen`
+  section sets `autoplaySeconds`, `showAt`, `shrinkVideo` and
+  `secondsBeforeEnd`. `EYZFlowEndScreen(settings:)` wins over it,
+  `enabled: false` turns it off for one player. Without items and a next
+  stream nothing shows. Accent and text colours from the theme.
+- **Your own overlay:** `options.overlay` is asked at every signal and at
+  the end, with the signal and `controls` (skip, seek, play, pause,
+  dismiss). The view controller it returns is presented over AVKit's player
+  (over full screen unless it sets its own style) and wins over the end
+  screen; nil shows the end screen, or nothing.
+- Text in en, de, fr or nl.
+
 ## Targets
 
 | Target | What |
@@ -279,8 +355,8 @@ fixtures and expectations.
 
 ## Not yet
 
-- Player configs (`configID`) give the key check and the ads, but do not
-  style AVKit's player.
+- Player configs (`configID`) give the key check, the ads and the skip
+  button's look, but do not style AVKit's player.
 
 ## Example
 

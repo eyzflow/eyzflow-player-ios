@@ -27,6 +27,8 @@ private let remoteJSON: JSONValue = [
         "ads": false,
         "adCountdown": true,
         "autoHideControls": false,
+        "skipButtons": false,
+        "endScreen": false,
     ],
     "cast": [
         "receiverAppId": "ABCD1234",
@@ -48,6 +50,7 @@ struct PlayerConfigJSONTests {
         #expect(config.theme.borderRadius == "4px")
         #expect(config.features.loop)
         #expect(!config.features.chromecast)
+        #expect(!config.features.skipButtons)
         #expect(config.castReceiverAppID == "ABCD1234")
         #expect(config.cast?.autoJoinPolicy == "origin_scoped")
         #expect(config.ads?.adTagURL == "")

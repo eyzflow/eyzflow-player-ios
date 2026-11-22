@@ -24,7 +24,8 @@ import UIKit
 /// button, Menu on Apple TV) ends the playback.
 @MainActor
 public final class EYZFlowPlayerViewController: UIViewController {
-    public let playback: EYZFlowPlayback
+    /// The playback; a new one after the end screen plays a picked film.
+    public private(set) var playback: EYZFlowPlayback
 
     private var playerController: AVPlayerViewController?
     private var appeared = false
@@ -37,6 +38,27 @@ public final class EYZFlowPlayerViewController: UIViewController {
     private let spinner = UIActivityIndicatorView(style: .large)
     private let messageLabel = UILabel()
     private let closeButton = UIButton(type: .system)
+
+    /// The signal the skip button (iPhone, iPad) or AVKit's contextual action
+    /// (Apple TV) offers to skip.
+    private var skipOffered: StreamSignal?
+    #if os(iOS)
+    /// "Skip intro", "Skip recap" or "Skip credits", over the player.
+    private let skipButton = SkipSignalButton()
+    #endif
+
+    /// The end screen or the app's overlay, presented over AVKit's player.
+    private var overPlayer: UIViewController?
+    private var overTransitioning = false
+    /// The end screen while it shows, kept from the credits to the end so its
+    /// countdown runs on.
+    private var endScreen: EndScreenViewController?
+    /// The moment the app's overlay was last asked for, and its answer.
+    private var overlayMoment: String?
+    private var overlayController: UIViewController?
+    /// Moments the viewer or the app dismissed ("signal:id", "ended",
+    /// "end:credits", "end:ended"), for the stream playing.
+    private var dismissedMoments: Set<String> = []
 
     #if os(iOS)
     /// Chromecast: nil when the options turn it off.
@@ -63,6 +85,8 @@ public final class EYZFlowPlayerViewController: UIViewController {
     private var inAdBreak = false
     /// "Ad in 5" … "Ad in 1" before a mid-roll, in a corner over the player.
     private let adCountdownView = AdCountdownView()
+    /// Moves the countdown up while the skip button shows (iPhone, iPad).
+    private var adCountdownBottom: NSLayoutConstraint?
     #endif
 
     public init(options: EYZFlowPlayerOptions) {
@@ -74,9 +98,6 @@ public final class EYZFlowPlayerViewController: UIViewController {
         #endif
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
-        #if canImport(GoogleInteractiveMediaAds)
-            playback.adHost = self
-        #endif
     }
 
     @available(*, unavailable)
@@ -84,11 +105,41 @@ public final class EYZFlowPlayerViewController: UIViewController {
         fatalError("init(coder:) is not supported")
     }
 
+    /// Hears `playback`: state, signals and the end screen.
+    private func hook(_ playback: EYZFlowPlayback) {
+        playback.onStateChange = { [weak self, weak playback] state in
+            guard let self, playback === self.playback else { return }
+            self.render(state)
+            self.syncOverPlayer()
+        }
+        playback.onSignalChange = { [weak self, weak playback] _ in
+            guard let self, playback === self.playback else { return }
+            self.renderSkip()
+            self.syncOverPlayer()
+        }
+        playback.onEndScreenChange = { [weak self, weak playback] _ in
+            guard let self, playback === self.playback else { return }
+            self.syncOverPlayer()
+        }
+        #if canImport(GoogleInteractiveMediaAds)
+            playback.adHost = self
+        #endif
+    }
+
+    private func unhook(_ playback: EYZFlowPlayback) {
+        playback.onStateChange = nil
+        playback.onSignalChange = nil
+        playback.onEndScreenChange = nil
+        #if canImport(GoogleInteractiveMediaAds)
+            playback.adHost = nil
+        #endif
+    }
+
     override public func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
         buildViews()
-        playback.onStateChange = { [weak self] state in self?.render(state) }
+        hook(playback)
         render(playback.state)
         backgroundToken = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
@@ -168,7 +219,16 @@ public final class EYZFlowPlayerViewController: UIViewController {
     }
 
     private func presentPlayer() {
-        guard !finished, appeared, presentedViewController == nil, let player = playback.player else { return }
+        guard !finished, appeared, let player = playback.player else { return }
+        // A film picked on the end screen plays in AVKit's player already on.
+        if let playerController, playerShown, playerController.presentingViewController != nil {
+            if playerController.player !== player, endScreen?.videoView.playerLayer.player !== player {
+                playerController.player = player
+                attachViews(to: playerController)
+            }
+            return
+        }
+        guard presentedViewController == nil else { return }
         // After casting the phone plays a new player.
         let controller = playerController?.player === player ? playerController! : makePlayerController(player)
         playerController = controller
@@ -176,15 +236,25 @@ public final class EYZFlowPlayerViewController: UIViewController {
             // From here on, this screen showing again means AVKit's player
             // was dismissed.
             self?.playerShown = true
-            #if os(iOS)
-                // After AVKit laid out its own controls, so they sit above them.
-                self?.addAdView(to: controller)
-                self?.addCastButton(to: controller)
-            #elseif canImport(GoogleInteractiveMediaAds)
-                self?.addAdCountdownView(to: controller)
-                self?.syncAdScreen()
-            #endif
+            self?.attachViews(to: controller)
+            self?.syncOverPlayer()
         }
+    }
+
+    /// The player's own views over AVKit's: ads, Cast, skip.
+    private func attachViews(to controller: AVPlayerViewController) {
+        #if os(iOS)
+            // After AVKit laid out its own controls, so they sit above them.
+            addAdView(to: controller)
+            addCastButton(to: controller)
+            addSkipButton(to: controller)
+        #elseif canImport(GoogleInteractiveMediaAds)
+            addAdCountdownView(to: controller)
+            syncAdScreen()
+        #endif
+        // A new player controller (after casting) has no offer yet.
+        skipOffered = nil
+        renderSkip()
     }
 
     private func makePlayerController(_ player: AVPlayer) -> AVPlayerViewController {
@@ -224,6 +294,223 @@ public final class EYZFlowPlayerViewController: UIViewController {
     @objc private func closeTapped() {
         finish()
     }
+
+    // MARK: End screen and the app's overlay
+
+    private var isInAdBreak: Bool {
+        #if canImport(GoogleInteractiveMediaAds)
+            inAdBreak
+        #else
+            false
+        #endif
+    }
+
+    /// What should be over AVKit's player now: the app's overlay for this
+    /// moment, else the end screen, else nothing. Never in an ad break.
+    private func wantedOverPlayer() -> UIViewController? {
+        guard !isInAdBreak, playback.state == .playing else { return nil }
+        let ended = playback.isAtEnd
+        let signal = ended ? nil : playback.activeSignal
+        let moment = ended ? "ended" : signal.map { "signal:\($0.id)" }
+        if let provider = playback.options.overlay, let moment, !dismissedMoments.contains(moment) {
+            if overlayMoment != moment {
+                overlayMoment = moment
+                overlayController = provider(EYZFlowOverlayContext(signal: signal, ended: ended, controls: overlayControls(moment)))
+                if let overlayController, overlayController.modalPresentationStyle == .automatic {
+                    overlayController.modalPresentationStyle = .overFullScreen
+                }
+            }
+            if let overlayController { return overlayController }
+        } else if moment == nil {
+            overlayMoment = nil
+            overlayController = nil
+        }
+        guard let phase = playback.endScreenPhase, let options = playback.options.endScreen,
+              !dismissedMoments.contains("end:\(phase.rawValue)") else { return nil }
+        if let endScreen {
+            endScreen.setPhase(phase)
+            return endScreen
+        }
+        let screen = EndScreenViewController(
+            endScreen: options,
+            settings: playback.endScreenSettings,
+            theme: playback.config.theme,
+            phase: phase
+        )
+        screen.onPick = { [weak self] item, autoplay in self?.picked(item, autoplay: autoplay) }
+        screen.onBack = { [weak self, weak screen] in
+            guard let self, let screen else { return }
+            self.dismissedMoments.insert("end:\(screen.phase.rawValue)")
+            self.syncOverPlayer()
+        }
+        screen.onClose = { [weak self] in self?.finish() }
+        endScreen = screen
+        return screen
+    }
+
+    private func overlayControls(_ moment: String) -> EYZFlowOverlayControls {
+        EYZFlowOverlayControls(
+            skip: { [weak self] in self?.playback.skipSignal() },
+            seek: { [weak self] in self?.playback.seek(to: $0) },
+            play: { [weak self] in self?.playback.play() },
+            pause: { [weak self] in self?.playback.pause() },
+            dismiss: { [weak self] in
+                self?.dismissedMoments.insert(moment)
+                self?.syncOverPlayer()
+            }
+        )
+    }
+
+    /// Presents what should be over AVKit's player and dismisses what should
+    /// not. One transition at a time; each one ends by checking again.
+    private func syncOverPlayer() {
+        guard !overTransitioning, !finished, let playerController, playerShown else { return }
+        let wanted = wantedOverPlayer()
+        if let shown = overPlayer, shown !== wanted {
+            if shown === endScreen { endScreen = nil }
+            placeVideo(corner: false)
+            guard shown.presentingViewController != nil else {
+                overPlayer = nil
+                syncOverPlayer()
+                return
+            }
+            overTransitioning = true
+            shown.dismiss(animated: true) { [weak self] in
+                self?.overTransitioning = false
+                self?.overPlayer = nil
+                self?.syncOverPlayer()
+                #if os(tvOS) && canImport(GoogleInteractiveMediaAds)
+                    // An ad break waits for this screen to go.
+                    self?.syncAdScreen()
+                #endif
+            }
+            return
+        }
+        guard let wanted else { return }
+        if overPlayer === wanted {
+            placeVideo(corner: wantsCornerVideo)
+            return
+        }
+        // Not over AVKit's own sheets (the Cast picker) or the ad screen.
+        guard playerController.presentingViewController != nil, playerController.presentedViewController == nil else { return }
+        overTransitioning = true
+        overPlayer = wanted
+        playerController.present(wanted, animated: true) { [weak self] in
+            guard let self else { return }
+            self.overTransitioning = false
+            self.syncOverPlayer()
+        }
+    }
+
+    /// The film's video in the end screen's corner: over the credits, with
+    /// `shrinkVideo` on.
+    private var wantsCornerVideo: Bool {
+        guard let endScreen, overPlayer === endScreen, endScreen.phase == .credits else { return false }
+        return playback.endScreenSettings.shrinkVideo
+    }
+
+    /// Moves the film's video into the end screen's corner, or back to AVKit's
+    /// player. An AVPlayer shows in one layer at a time.
+    private func placeVideo(corner: Bool) {
+        guard let playerController, let player = playback.player else { return }
+        if corner, let endScreen {
+            if playerController.player != nil { playerController.player = nil }
+            endScreen.showVideo(player)
+        } else {
+            endScreen?.showVideo(nil)
+            if playerController.player == nil { playerController.player = player }
+        }
+    }
+
+    /// The viewer, or the countdown, picked a film: the app hears it first;
+    /// unless it prevents it, the film plays here.
+    private func picked(_ item: EndScreenItem, autoplay: Bool) {
+        let selection = EndScreenSelection(item: item, autoplay: autoplay)
+        playback.options.endScreen?.onSelect?(selection)
+        guard !selection.isPrevented else { return }
+        play(item)
+    }
+
+    /// Plays `item` in place: the old playback closed (position, last beat,
+    /// session), a new one with its own key check, session and FairPlay, in
+    /// the same AVKit player.
+    private func play(_ item: EndScreenItem) {
+        var options = playback.options
+        options.streamID = item.streamID
+        options.title = item.title
+        options.description = item.description
+        options.poster = item.poster
+        options.sourceType = item.sourceType
+            ?? (options.isProtected ? .film(catalogueID: item.streamID) : .trailer(catalogueID: item.streamID))
+        options.progressSeconds = nil
+        let old = playback
+        placeVideo(corner: false)
+        unhook(old)
+        let next = EYZFlowPlayback(options: options)
+        playback = next
+        hook(next)
+        dismissedMoments = []
+        overlayMoment = nil
+        overlayController = nil
+        skipOffered = nil
+        renderSkip()
+        syncOverPlayer()
+        render(next.state)
+        Task {
+            await old.close()
+            await next.start()
+        }
+    }
+
+    // MARK: Skip intro, recap and credits
+
+    /// Offers to skip the signal playback is in: while there is one, the
+    /// config's `features.skipButtons` is on, and no ad break is under way.
+    private func renderSkip() {
+        var signal = playback.activeSignal.flatMap { playback.config.showsSkipButton(for: $0.type) ? $0 : nil }
+        #if canImport(GoogleInteractiveMediaAds)
+            if inAdBreak { signal = nil }
+        #endif
+        guard signal?.id != skipOffered?.id else { return }
+        skipOffered = signal
+        #if os(iOS)
+            skipButton.show(signal)
+            #if canImport(GoogleInteractiveMediaAds)
+                adCountdownBottom?.constant = signal == nil ? -72 : -128
+            #endif
+        #else
+            // AVKit's own skip button over the transport bar, which the
+            // remote focuses.
+            playerController?.contextualActions = signal.map { signal in
+                [UIAction(title: signal.skipLabel()) { [weak self] _ in self?.playback.skipSignal() }]
+            } ?? []
+        #endif
+    }
+
+    #if os(iOS)
+    /// The skip button, over AVKit's player above its bottom bar, styled by
+    /// the config's theme.
+    private func addSkipButton(to controller: AVPlayerViewController) {
+        if skipButton.superview !== controller.view {
+            skipButton.removeFromSuperview()
+            skipButton.apply(theme: playback.config.theme)
+            skipButton.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
+            skipButton.translatesAutoresizingMaskIntoConstraints = false
+            controller.view.addSubview(skipButton)
+            let guide = controller.view.safeAreaLayoutGuide
+            NSLayoutConstraint.activate([
+                skipButton.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
+                skipButton.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -72),
+            ])
+        } else {
+            controller.view.bringSubviewToFront(skipButton)
+        }
+    }
+
+    @objc private func skipTapped() {
+        playback.skipSignal()
+    }
+    #endif
 
     // MARK: Views
 
@@ -430,9 +717,14 @@ extension EYZFlowPlayerViewController {
             adCountdownView.translatesAutoresizingMaskIntoConstraints = false
             controller.view.addSubview(adCountdownView)
             let guide = controller.view.safeAreaLayoutGuide
+            let bottom = adCountdownView.bottomAnchor.constraint(
+                equalTo: guide.bottomAnchor,
+                constant: skipOffered == nil ? -72 : -128
+            )
+            adCountdownBottom = bottom
             NSLayoutConstraint.activate([
                 adCountdownView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
-                adCountdownView.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -72),
+                bottom,
             ])
         } else {
             controller.view.bringSubviewToFront(adCountdownView)
@@ -522,6 +814,8 @@ extension EYZFlowPlayerViewController: AdContainerHost {
             adScreen.render(waiting: inBreak && !adPlaying, adPlaying: adPlaying)
             syncAdScreen()
         #endif
+        renderSkip()
+        syncOverPlayer()
     }
 
     func adCountdownChanged(_ seconds: Int?) {
@@ -791,6 +1085,58 @@ public enum EYZFlowPlayer {
         guard let host else { return nil }
         host.present(player, animated: true)
         return player
+    }
+}
+#endif
+
+#if os(iOS)
+/// The skip button: a rounded label over the player in the theme's bar and
+/// text colours, with a thin outline. VoiceOver reads it as a button.
+final class SkipSignalButton: UIButton {
+    private var theme = PlayerTheme()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isHidden = true
+        apply(theme: theme)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    func apply(theme: PlayerTheme) {
+        self.theme = theme
+        let fallback = PlayerTheme()
+        let background = UIColor(css: theme.controlsBarColor) ?? UIColor(css: fallback.controlsBarColor)!
+        let text = UIColor(css: theme.textColor) ?? UIColor(css: fallback.textColor)!
+        var configuration = UIButton.Configuration.filled()
+        configuration.baseBackgroundColor = background
+        configuration.baseForegroundColor = text
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 11, leading: 18, bottom: 11, trailing: 18)
+        configuration.background.cornerRadius = CGFloat(cssLength(theme.borderRadius) ?? 10)
+        configuration.background.strokeColor = text.withAlphaComponent(0.55)
+        configuration.background.strokeWidth = 1
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFontMetrics(forTextStyle: .subheadline)
+                .scaledFont(for: .systemFont(ofSize: 15, weight: .semibold))
+            return attributes
+        }
+        configuration.title = self.configuration?.title
+        self.configuration = configuration
+    }
+
+    /// The signal to offer, or nil to hide.
+    func show(_ signal: StreamSignal?) {
+        guard let signal else {
+            isHidden = true
+            return
+        }
+        configuration?.title = signal.skipLabel()
+        accessibilityLabel = signal.skipLabel()
+        isHidden = false
     }
 }
 #endif

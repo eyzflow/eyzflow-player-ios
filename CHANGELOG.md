@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Skip intro, recap and credits (EYF-215). The signals marked on a stream
+  (Stream → Signals) are read from its HLS playlist. While playback is in
+  one, a "Skip intro", "Skip recap" or "Skip credits" button shows over the
+  player on iPhone and iPad, and AVKit's own skip button on Apple TV. A skip
+  lands at the signal's end, never before it. `features.skipButtons: false`
+  hides it. The iPhone and iPad button takes the config's theme. Text in en,
+  de, fr and nl.
+- `skipButtonTypes` (EYF-223): the skip button per signal type, from the
+  player config or inline. By default intro, recap and opening credits; no
+  "Skip credits" over the closing credits unless `closingCredits: true`.
+- New `PlaybackEvent` cases `signalStarted` and `signalEnded`, and
+  `EYZFlowPlayerOptions.onSignal`, for offering the next episode at the
+  closing credits. An exhaustive `switch` over `PlaybackEvent` needs the two
+  new cases. `EYZFlowPlayback.skipSignal()`, `activeSignal` and `config`.
+- The stream's playlist is read once per playback for its markers even
+  without ads (`loadHLSMarkers`; `loadHLSAdBreaks` reads it too).
+- End screen (EYF-224): `EYZFlowPlayerOptions.endScreen` with the app's
+  films (`EndScreenItem`) and a next stream. Over the closing credits (the
+  video in a corner), in the last 20 s of a stream without them, and after
+  the end: "Up next" with a countdown, a row of films, "Back to credits".
+  A pick plays in place with its own key check, session and FairPlay;
+  `onSelect` hears it first and can `preventDefault()`. Remote config:
+  `features.endScreen` and `endScreen` (`autoplaySeconds`, `showAt`,
+  `shrinkVideo`, `secondsBeforeEnd`). Apple TV: Play has the focus, Menu
+  goes back. `EYZFlowPlayerViewController.playback` changes after a pick.
+- `EYZFlowPlayerOptions.overlay`: the app's own view controller over the
+  player at a signal or after the end, with skip, seek, play, pause and
+  dismiss. `EYZFlowPlayback.endScreenPhase`, `onEndScreenChange`,
+  `isAtEnd`, `seek(to:)`, `play()`, `pause()`.
 - `PlaybackSeeked` is reported again, once per seek, with where it started
   and where it landed: for AVKit's controls, scrubbing and `player.seek`, also
   while paused. AVPlayer's time observer fires on a jump before the jump

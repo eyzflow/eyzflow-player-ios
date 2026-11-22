@@ -104,6 +104,12 @@ public struct PlayerFeatures: Sendable, Hashable {
     /// Missing (configs saved before it): on.
     public var adCountdown: Bool
     public var autoHideControls: Bool
+    /// "Skip intro", "Skip recap" and "Skip credits" at the stream's signals.
+    /// Missing (configs saved before it): on.
+    public var skipButtons: Bool
+    /// The end screen (up next and similar films) when the app passes items.
+    /// Missing (configs saved before it): on.
+    public var endScreen: Bool
 
     public init(
         controls: Bool = true,
@@ -117,7 +123,9 @@ public struct PlayerFeatures: Sendable, Hashable {
         pip: Bool = true,
         ads: Bool = false,
         adCountdown: Bool = true,
-        autoHideControls: Bool = true
+        autoHideControls: Bool = true,
+        skipButtons: Bool = true,
+        endScreen: Bool = true
     ) {
         self.controls = controls
         self.autoPlay = autoPlay
@@ -131,6 +139,8 @@ public struct PlayerFeatures: Sendable, Hashable {
         self.ads = ads
         self.adCountdown = adCountdown
         self.autoHideControls = autoHideControls
+        self.skipButtons = skipButtons
+        self.endScreen = endScreen
     }
 
     public init(json: [String: JSONValue], base: PlayerFeatures = PlayerFeatures()) {
@@ -151,7 +161,9 @@ public struct PlayerFeatures: Sendable, Hashable {
             pip: patch.pip ?? pip,
             ads: patch.ads ?? ads,
             adCountdown: patch.adCountdown ?? adCountdown,
-            autoHideControls: patch.autoHideControls ?? autoHideControls
+            autoHideControls: patch.autoHideControls ?? autoHideControls,
+            skipButtons: patch.skipButtons ?? skipButtons,
+            endScreen: patch.endScreen ?? endScreen
         )
     }
 
@@ -169,6 +181,8 @@ public struct PlayerFeatures: Sendable, Hashable {
             "ads": .bool(ads),
             "adCountdown": .bool(adCountdown),
             "autoHideControls": .bool(autoHideControls),
+            "skipButtons": .bool(skipButtons),
+            "endScreen": .bool(endScreen),
         ]
     }
 }
@@ -187,6 +201,8 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
     public var ads: Bool?
     public var adCountdown: Bool?
     public var autoHideControls: Bool?
+    public var skipButtons: Bool?
+    public var endScreen: Bool?
 
     public init(
         controls: Bool? = nil,
@@ -200,7 +216,9 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
         pip: Bool? = nil,
         ads: Bool? = nil,
         adCountdown: Bool? = nil,
-        autoHideControls: Bool? = nil
+        autoHideControls: Bool? = nil,
+        skipButtons: Bool? = nil,
+        endScreen: Bool? = nil
     ) {
         self.controls = controls
         self.autoPlay = autoPlay
@@ -214,6 +232,8 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
         self.ads = ads
         self.adCountdown = adCountdown
         self.autoHideControls = autoHideControls
+        self.skipButtons = skipButtons
+        self.endScreen = endScreen
     }
 
     public init(json: [String: JSONValue]) {
@@ -229,7 +249,9 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
             pip: json["pip"]?.boolValue,
             ads: json["ads"]?.boolValue,
             adCountdown: json["adCountdown"]?.boolValue,
-            autoHideControls: json["autoHideControls"]?.boolValue
+            autoHideControls: json["autoHideControls"]?.boolValue,
+            skipButtons: json["skipButtons"]?.boolValue,
+            endScreen: json["endScreen"]?.boolValue
         )
     }
 }
@@ -321,6 +343,63 @@ public struct PlayerDRMConfig: Sendable, Hashable {
     public var json: JSONValue { ["parameters": .object(parameters)] }
 }
 
+/// Which signals get a skip button (`features.skipButtons`): the config's
+/// `skipButtonTypes`. A type left out keeps its default: intro, recap and
+/// opening credits on, closing credits off (skipping them only ends the film;
+/// the end screen belongs there).
+public struct PlayerSkipButtonTypes: Sendable, Hashable {
+    public var intro: Bool?
+    public var recap: Bool?
+    public var openingCredits: Bool?
+    public var closingCredits: Bool?
+
+    public init(intro: Bool? = nil, recap: Bool? = nil, openingCredits: Bool? = nil, closingCredits: Bool? = nil) {
+        self.intro = intro
+        self.recap = recap
+        self.openingCredits = openingCredits
+        self.closingCredits = closingCredits
+    }
+
+    public init(json: [String: JSONValue]) {
+        self.init(
+            intro: json["intro"]?.boolValue,
+            recap: json["recap"]?.boolValue,
+            openingCredits: json["openingCredits"]?.boolValue,
+            closingCredits: json["closingCredits"]?.boolValue
+        )
+    }
+
+    /// Whether `type` gets a skip button.
+    public func allows(_ type: StreamSignalType) -> Bool {
+        switch type {
+        case .intro: intro ?? true
+        case .recap: recap ?? true
+        case .openingCredits: openingCredits ?? true
+        case .closingCredits: closingCredits ?? false
+        }
+    }
+
+    /// `patch`'s values over these.
+    public func merged(with patch: PlayerSkipButtonTypes?) -> PlayerSkipButtonTypes {
+        guard let patch else { return self }
+        return PlayerSkipButtonTypes(
+            intro: patch.intro ?? intro,
+            recap: patch.recap ?? recap,
+            openingCredits: patch.openingCredits ?? openingCredits,
+            closingCredits: patch.closingCredits ?? closingCredits
+        )
+    }
+
+    public var json: JSONValue {
+        var out: [String: JSONValue] = [:]
+        if let intro { out["intro"] = .bool(intro) }
+        if let recap { out["recap"] = .bool(recap) }
+        if let openingCredits { out["openingCredits"] = .bool(openingCredits) }
+        if let closingCredits { out["closingCredits"] = .bool(closingCredits) }
+        return .object(out)
+    }
+}
+
 /// A player config: `GET /v1/player-configs/{configId}`, merged with an
 /// inline [`PlayerConfigOverride`] by [`mergePlayerConfig(_:_:)`].
 public struct PlayerConfig: Sendable, Hashable {
@@ -334,6 +413,10 @@ public struct PlayerConfig: Sendable, Hashable {
     public var cast: PlayerCastConfig?
     public var ads: PlayerAdsConfig?
     public var drm: PlayerDRMConfig?
+    /// Which signals get a skip button; nil: the defaults.
+    public var skipButtonTypes: PlayerSkipButtonTypes?
+    /// How the end screen behaves (`features.endScreen`); nil: the defaults.
+    public var endScreen: PlayerEndScreenConfig?
 
     /// The web player's `DEFAULT_CONFIG`, and the backend's defaults.
     public static let defaults = PlayerConfig()
@@ -346,7 +429,9 @@ public struct PlayerConfig: Sendable, Hashable {
         features: PlayerFeatures = PlayerFeatures(),
         cast: PlayerCastConfig? = nil,
         ads: PlayerAdsConfig? = nil,
-        drm: PlayerDRMConfig? = nil
+        drm: PlayerDRMConfig? = nil,
+        skipButtonTypes: PlayerSkipButtonTypes? = nil,
+        endScreen: PlayerEndScreenConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -356,6 +441,8 @@ public struct PlayerConfig: Sendable, Hashable {
         self.cast = cast
         self.ads = ads
         self.drm = drm
+        self.skipButtonTypes = skipButtonTypes
+        self.endScreen = endScreen
     }
 
     /// The backend's camelCase JSON. Missing or mistyped fields keep the
@@ -370,8 +457,16 @@ public struct PlayerConfig: Sendable, Hashable {
             features: json["features"]?.objectValue.map { PlayerFeatures(json: $0) } ?? defaults.features,
             cast: json["cast"]?.objectValue.map(PlayerCastConfig.init(json:)),
             ads: json["ads"]?.objectValue.map(PlayerAdsConfig.init(json:)),
-            drm: json["drm"]?.objectValue.map(PlayerDRMConfig.init(json:))
+            drm: json["drm"]?.objectValue.map(PlayerDRMConfig.init(json:)),
+            skipButtonTypes: json["skipButtonTypes"]?.objectValue.map(PlayerSkipButtonTypes.init(json:)),
+            endScreen: json["endScreen"]?.objectValue.map(PlayerEndScreenConfig.init(json:))
         )
+    }
+
+    /// Whether the skip button shows for `type`: the skip buttons on, and that
+    /// type switched on (by default all but the closing credits).
+    public func showsSkipButton(for type: StreamSignalType) -> Bool {
+        features.skipButtons && (skipButtonTypes ?? PlayerSkipButtonTypes()).allows(type)
     }
 
     /// `cast.receiverAppId`, when set.
@@ -391,6 +486,8 @@ public struct PlayerConfig: Sendable, Hashable {
         if let cast { out["cast"] = cast.json }
         if let ads { out["ads"] = ads.json }
         if let drm { out["drm"] = drm.json }
+        if let skipButtonTypes { out["skipButtonTypes"] = skipButtonTypes.json }
+        if let endScreen { out["endScreen"] = endScreen.json }
         return .object(out)
     }
 
@@ -416,6 +513,10 @@ public struct PlayerConfigOverride: Sendable, Hashable {
     public var ads: PlayerAdsConfig?
     /// Its parameters are merged over the remote ones.
     public var drm: PlayerDRMConfig?
+    /// Merged type by type.
+    public var skipButtonTypes: PlayerSkipButtonTypes?
+    /// Merged field by field.
+    public var endScreen: PlayerEndScreenConfig?
 
     public init(
         id: String? = nil,
@@ -425,7 +526,9 @@ public struct PlayerConfigOverride: Sendable, Hashable {
         features: PlayerFeaturesOverride? = nil,
         cast: PlayerCastConfig? = nil,
         ads: PlayerAdsConfig? = nil,
-        drm: PlayerDRMConfig? = nil
+        drm: PlayerDRMConfig? = nil,
+        skipButtonTypes: PlayerSkipButtonTypes? = nil,
+        endScreen: PlayerEndScreenConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -435,6 +538,8 @@ public struct PlayerConfigOverride: Sendable, Hashable {
         self.cast = cast
         self.ads = ads
         self.drm = drm
+        self.skipButtonTypes = skipButtonTypes
+        self.endScreen = endScreen
     }
 }
 
@@ -454,7 +559,11 @@ public func mergePlayerConfig(_ base: PlayerConfig, _ patch: PlayerConfigOverrid
             PlayerDRMConfig(
                 parameters: (base.drm?.parameters ?? [:]).merging(drm.parameters) { _, inline in inline }
             )
-        } ?? base.drm
+        } ?? base.drm,
+        skipButtonTypes: patch.skipButtonTypes.map { (base.skipButtonTypes ?? PlayerSkipButtonTypes()).merged(with: $0) }
+            ?? base.skipButtonTypes,
+        endScreen: patch.endScreen.map { (base.endScreen ?? PlayerEndScreenConfig()).merged(with: $0) }
+            ?? base.endScreen
     )
 }
 
