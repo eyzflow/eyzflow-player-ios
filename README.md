@@ -212,6 +212,53 @@ fetch as the ad markers, with or without ads.
   own player UI.
 - The dashboard's `label` is passed on, not shown.
 
+### End screen
+
+Pass films and the next stream, and the player shows a Netflix-like end
+screen over the closing credits (the video shrinks into a corner) and after
+the film:
+
+```swift
+let next = EndScreenItem(streamID: "…", title: "Episode 2", poster: posterURL, duration: .seconds(2700), badge: "S1 E2")
+let options = EYZFlowPlayerOptions(
+    streamID: streamID,
+    title: "Episode 1",
+    sourceType: .film(catalogueID: catalogueID),
+    endScreen: EYZFlowEndScreen(
+        items: [next, similarFilm, otherFilm],
+        nextUp: next,
+        onSelect: { selection in
+            // selection.item, selection.autoplay; preventDefault() to handle it yourself
+        }
+    )
+)
+```
+
+- **Up next** counts down (`autoplaySeconds`, 10 by default, 0 for none)
+  and plays the next stream; Cancel stops the countdown. Any film in the
+  row plays on tap (Apple TV: select).
+- A pick plays **in place**, in the same AVKit player: the old playback is
+  closed (position saved, last beat, session closed) and the new one runs
+  its own key check, session and FairPlay. A film picked during a film
+  plays as a film unless the item has its own `sourceType`.
+- **When:** over the closing credits signal; on a stream without one, the
+  last `secondsBeforeEnd` seconds (20 by default, 0 for only at the end);
+  and after the end. `showAt: .end` shows it only after the end.
+- **Back:** "Back to credits", a tap on the small video, or Menu on Apple
+  TV hides it until the film ends. On iPhone and iPad the close button
+  closes the player.
+- Remote config: `features.endScreen: false` turns it off; the `endScreen`
+  section sets `autoplaySeconds`, `showAt`, `shrinkVideo` and
+  `secondsBeforeEnd`. `EYZFlowEndScreen(settings:)` wins over it,
+  `enabled: false` turns it off for one player. Without items and a next
+  stream nothing shows. Accent and text colours from the theme.
+- **Your own overlay:** `options.overlay` is asked at every signal and at
+  the end, with the signal and `controls` (skip, seek, play, pause,
+  dismiss). The view controller it returns is presented over AVKit's player
+  (over full screen unless it sets its own style) and wins over the end
+  screen; nil shows the end screen, or nothing.
+- Text in en, de, fr or nl.
+
 ## Targets
 
 | Target | What |

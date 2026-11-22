@@ -1,5 +1,8 @@
 import EYZFlowPlayerCore
 import Foundation
+#if os(iOS) || os(tvOS)
+import UIKit
+#endif
 
 /// What to play and how: the stream, the viewer's credentials and the hooks
 /// the app wants. The Flutter package's `EyzflowPlayer` parameters.
@@ -56,6 +59,14 @@ public struct EYZFlowPlayerOptions: Sendable {
     /// episode when `.closingCredits` starts. The same as the `signalStarted`
     /// and `signalEnded` events.
     public var onSignal: (@MainActor @Sendable (StreamSignal?) -> Void)?
+    /// The built-in end screen with the films you pass (up next, similar
+    /// films); nil shows none.
+    public var endScreen: EYZFlowEndScreen?
+    #if os(iOS) || os(tvOS)
+    /// Your own view controller over the player at a signal or after the
+    /// end; it wins over `endScreen` when it returns one.
+    public var overlay: EYZFlowOverlayProvider?
+    #endif
     /// A stream or device limit refused or ended playback.
     public var onLimitReached: (@MainActor @Sendable (PlaybackLimitError) -> Void)?
     /// The player key check refused the app.
@@ -86,6 +97,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         castReceiverAppID: String? = eyzflowCastReceiverAppID,
         onEvent: (@MainActor @Sendable (PlaybackEvent) -> Void)? = nil,
         onSignal: (@MainActor @Sendable (StreamSignal?) -> Void)? = nil,
+        endScreen: EYZFlowEndScreen? = nil,
         onLimitReached: (@MainActor @Sendable (PlaybackLimitError) -> Void)? = nil,
         onLicenseError: (@MainActor @Sendable (PlayerLicenseError) -> Void)? = nil,
         onError: (@MainActor @Sendable (String) -> Void)? = nil,
@@ -111,6 +123,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         self.castReceiverAppID = castReceiverAppID
         self.onEvent = onEvent
         self.onSignal = onSignal
+        self.endScreen = endScreen
         self.onLimitReached = onLimitReached
         self.onLicenseError = onLicenseError
         self.onError = onError
