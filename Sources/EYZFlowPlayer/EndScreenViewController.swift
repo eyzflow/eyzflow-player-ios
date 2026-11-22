@@ -175,6 +175,8 @@ final class EndScreenViewController: UIViewController {
         loadViewIfNeeded()
         videoView.playerLayer.player = player
         videoView.isHidden = player == nil
+        // AVKit's player underneath has no video then, only its spinner.
+        view.backgroundColor = player == nil ? .clear : .black
     }
 
     // MARK: Content

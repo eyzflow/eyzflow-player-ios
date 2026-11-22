@@ -67,6 +67,7 @@ struct LoaderView: View {
             if let value = environment["EYZFLOW_STREAM_ID"] { streamID = value }
             if let value = environment["EYZFLOW_START_AT"] { startAt = value }
             if let value = environment["EYZFLOW_END_SCREEN_IDS"] { endScreenIDs = value }
+            if let value = environment["EYZFLOW_TYPE"] { isFilm = value != "trailer" }
             // Launch with EYZFLOW_AUTOPLAY=1 to play at once, for device checks.
             guard ProcessInfo.processInfo.environment["EYZFLOW_AUTOPLAY"] == "1", !streamID.trimmed.isEmpty else { return }
             try? await Task.sleep(for: .seconds(1))
