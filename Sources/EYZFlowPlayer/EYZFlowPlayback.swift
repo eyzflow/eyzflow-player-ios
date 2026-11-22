@@ -49,6 +49,23 @@ public final class EYZFlowPlayback {
     private var resumeSeconds: Double?
     private var accessHeader: String?
 
+    /// The stream's intro, recap and credits signals, and which one playback
+    /// is in.
+    private let signals = SignalTracker()
+    /// The playlist's ad breaks and signals, read once per playback.
+    private var markers: Task<HLSMarkers, Never>?
+
+    /// The player config: the dashboard config (when `configID` is set) with
+    /// `options.config` over it, once `start()` has read it.
+    public private(set) var config: PlayerConfig = .defaults
+
+    /// The intro, recap or credits signal playback is in, if any.
+    public var activeSignal: StreamSignal? { signals.current }
+
+    /// Called when playback enters or leaves a signal. The player screen
+    /// shows the skip button itself.
+    public var onSignalChange: (@MainActor (StreamSignal?) -> Void)?
+
     #if canImport(GoogleInteractiveMediaAds)
     /// Shows the ads; without one (an app with its own player UI) no ads
     /// play.
@@ -122,18 +139,39 @@ public final class EYZFlowPlayback {
             if case .failed(let failure) = status { self?.stop(with: failure.message) }
         }
         tracker.onEvent = { [weak self] event in self?.handle(event) }
+        signals.onStarted = { [weak self] signal in
+            guard let self else { return }
+            self.tracker.signalStarted(signal)
+            self.onSignalChange?(self.signals.current)
+            self.options.onSignal?(signal)
+        }
+        signals.onEnded = { [weak self] signal in
+            guard let self else { return }
+            self.tracker.signalEnded(signal)
+            self.onSignalChange?(self.signals.current)
+            self.options.onSignal?(nil)
+        }
     }
 
     /// Checks the key, opens the session and mounts the stream. Returns once
     /// the player has the stream, or the playback failed.
     public func start() async {
         guard state == .loading, player == nil else { return }
+        let master = options.source.hlsStreamURL
+        let markers = Task { await loadHLSMarkers(master: master) }
+        self.markers = markers
+        Task { [weak self] in
+            let found = await markers.value
+            guard let self, self.markers == markers else { return }
+            self.signals.signals = found.signals
+        }
+        async let playerConfig = Self.playerConfig(for: options)
         #if canImport(GoogleInteractiveMediaAds)
-            async let adConfig = Self.adConfig(for: options)
             // The session answers before any ad request: the pre-roll is
             // requested only once the player is mounted, after this.
             await coordinator.start()
-            let config = await adConfig
+            let config = await playerConfig
+            self.config = config
             showsAdCountdown = config.features.adCountdown
             adCountdownLength = config.ads?.countdownLength ?? AdCountdown.defaultLength
             setUpAds(adTag: adTagForPlayback(
@@ -143,6 +181,7 @@ public final class EYZFlowPlayback {
             ))
         #else
             await coordinator.start()
+            config = await playerConfig
         #endif
         guard state == .loading else { return }
         switch coordinator.status {
@@ -154,6 +193,37 @@ public final class EYZFlowPlayback {
         case .loading:
             break
         }
+    }
+
+    /// The dashboard config (when `configID` is set) with `options.config`
+    /// over it. Its `adTagToPlay` is nil when `features.ads` is off or the tag
+    /// is empty: then no ad request is made at all.
+    fileprivate static func playerConfig(for options: EYZFlowPlayerOptions) async -> PlayerConfig {
+        var config = PlayerConfig.defaults
+        if let id = options.configID, !id.isEmpty,
+           let remote = await PlayerConfigClient(endpoints: options.endpoints).load(id) {
+            config = remote
+        }
+        return config.merged(with: options.config)
+    }
+
+    /// Jumps to the end of the signal playback is in (the end of the content
+    /// at most, which ends it). Nothing during an ad break. The seek lands
+    /// at or after the end, never before it: AVPlayer's default tolerance
+    /// would snap it to an earlier keyframe, seconds inside the signal.
+    public func skipSignal() {
+        guard let signal = signals.current, let player, state == .playing else { return }
+        #if canImport(GoogleInteractiveMediaAds)
+            if adScheduler?.inBreak == true { return }
+        #endif
+        var target = signal.end
+        if let duration = currentDuration, target > duration { target = duration }
+        signals.skip(signal, to: target)
+        player.seek(
+            to: CMTime(value: CMTimeValue(target.inMilliseconds), timescale: 1000),
+            toleranceBefore: .zero,
+            toleranceAfter: .positiveInfinity
+        )
     }
 
     /// Ends the playback: the last position saved, the final beat sent and
@@ -404,6 +474,7 @@ public final class EYZFlowPlayback {
         lastTickPosition = position
         if tracker.isPlaying { recorder?.report(position) }
         sync()
+        signals.report(position)
         #if canImport(GoogleInteractiveMediaAds)
             adSeeking = false
             adScheduler?.contentPosition(position)
@@ -415,6 +486,7 @@ public final class EYZFlowPlayback {
         let from = lastTickPosition
         let to = currentPosition
         lastTickPosition = to
+        signals.report(to)
         #if canImport(GoogleInteractiveMediaAds)
             adScheduler?.contentSeeked(to: to)
             adSeeking = true
@@ -469,6 +541,7 @@ public final class EYZFlowPlayback {
     }
 
     private func reachedEnd() {
+        signals.report(nil)
         tracker.reachedEnd(position: currentPosition, duration: currentDuration)
         recorder?.finish()
         #if canImport(GoogleInteractiveMediaAds)
@@ -517,6 +590,7 @@ public final class EYZFlowPlayback {
         observations = []
         notificationTokens.forEach { NotificationCenter.default.removeObserver($0) }
         notificationTokens = []
+        signals.report(nil)
         player?.replaceCurrentItem(with: nil)
         player = nil
         item = nil
@@ -532,26 +606,17 @@ public final class EYZFlowPlayback {
 
 #if canImport(GoogleInteractiveMediaAds)
 extension EYZFlowPlayback {
-    /// The config for the ads: the dashboard config (when `configID` is set)
-    /// with `options.config` over it. Its `adTagToPlay` is nil when
-    /// `features.ads` is off or the tag is empty: then no ad request is made
-    /// at all.
-    fileprivate static func adConfig(for options: EYZFlowPlayerOptions) async -> PlayerConfig {
-        var config = PlayerConfig.defaults
-        if let id = options.configID, !id.isEmpty,
-           let remote = await PlayerConfigClient(endpoints: options.endpoints).load(id) {
-            config = remote
-        }
-        return config.merged(with: options.config)
-    }
-
     /// `adTag` is the tag to request, the plan's rule and targeting applied;
     /// nil plays no ads (no pre-roll, no mid-rolls).
     fileprivate func setUpAds(adTag: String?) {
         guard let adTag, ads == nil else { return }
         let ads = PlayerAds(adTagURL: adTag)
+        let markers = self.markers
         let master = options.source.hlsStreamURL
-        ads.loadMarkers { await loadHLSAdBreaks(master: master) }
+        ads.loadMarkers {
+            if let markers { return await markers.value.adBreaks }
+            return await loadHLSAdBreaks(master: master)
+        }
         self.ads = ads
     }
 

@@ -104,6 +104,9 @@ public struct PlayerFeatures: Sendable, Hashable {
     /// Missing (configs saved before it): on.
     public var adCountdown: Bool
     public var autoHideControls: Bool
+    /// "Skip intro", "Skip recap" and "Skip credits" at the stream's signals.
+    /// Missing (configs saved before it): on.
+    public var skipButtons: Bool
 
     public init(
         controls: Bool = true,
@@ -117,7 +120,8 @@ public struct PlayerFeatures: Sendable, Hashable {
         pip: Bool = true,
         ads: Bool = false,
         adCountdown: Bool = true,
-        autoHideControls: Bool = true
+        autoHideControls: Bool = true,
+        skipButtons: Bool = true
     ) {
         self.controls = controls
         self.autoPlay = autoPlay
@@ -131,6 +135,7 @@ public struct PlayerFeatures: Sendable, Hashable {
         self.ads = ads
         self.adCountdown = adCountdown
         self.autoHideControls = autoHideControls
+        self.skipButtons = skipButtons
     }
 
     public init(json: [String: JSONValue], base: PlayerFeatures = PlayerFeatures()) {
@@ -151,7 +156,8 @@ public struct PlayerFeatures: Sendable, Hashable {
             pip: patch.pip ?? pip,
             ads: patch.ads ?? ads,
             adCountdown: patch.adCountdown ?? adCountdown,
-            autoHideControls: patch.autoHideControls ?? autoHideControls
+            autoHideControls: patch.autoHideControls ?? autoHideControls,
+            skipButtons: patch.skipButtons ?? skipButtons
         )
     }
 
@@ -169,6 +175,7 @@ public struct PlayerFeatures: Sendable, Hashable {
             "ads": .bool(ads),
             "adCountdown": .bool(adCountdown),
             "autoHideControls": .bool(autoHideControls),
+            "skipButtons": .bool(skipButtons),
         ]
     }
 }
@@ -187,6 +194,7 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
     public var ads: Bool?
     public var adCountdown: Bool?
     public var autoHideControls: Bool?
+    public var skipButtons: Bool?
 
     public init(
         controls: Bool? = nil,
@@ -200,7 +208,8 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
         pip: Bool? = nil,
         ads: Bool? = nil,
         adCountdown: Bool? = nil,
-        autoHideControls: Bool? = nil
+        autoHideControls: Bool? = nil,
+        skipButtons: Bool? = nil
     ) {
         self.controls = controls
         self.autoPlay = autoPlay
@@ -214,6 +223,7 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
         self.ads = ads
         self.adCountdown = adCountdown
         self.autoHideControls = autoHideControls
+        self.skipButtons = skipButtons
     }
 
     public init(json: [String: JSONValue]) {
@@ -229,7 +239,8 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
             pip: json["pip"]?.boolValue,
             ads: json["ads"]?.boolValue,
             adCountdown: json["adCountdown"]?.boolValue,
-            autoHideControls: json["autoHideControls"]?.boolValue
+            autoHideControls: json["autoHideControls"]?.boolValue,
+            skipButtons: json["skipButtons"]?.boolValue
         )
     }
 }

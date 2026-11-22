@@ -38,6 +38,14 @@ public final class EYZFlowPlayerViewController: UIViewController {
     private let messageLabel = UILabel()
     private let closeButton = UIButton(type: .system)
 
+    /// The signal the skip button (iPhone, iPad) or AVKit's contextual action
+    /// (Apple TV) offers to skip.
+    private var skipOffered: StreamSignal?
+    #if os(iOS)
+    /// "Skip intro", "Skip recap" or "Skip credits", over the player.
+    private let skipButton = SkipSignalButton()
+    #endif
+
     #if os(iOS)
     /// Chromecast: nil when the options turn it off.
     private var cast: CastController?
@@ -63,6 +71,8 @@ public final class EYZFlowPlayerViewController: UIViewController {
     private var inAdBreak = false
     /// "Ad in 5" … "Ad in 1" before a mid-roll, in a corner over the player.
     private let adCountdownView = AdCountdownView()
+    /// Moves the countdown up while the skip button shows (iPhone, iPad).
+    private var adCountdownBottom: NSLayoutConstraint?
     #endif
 
     public init(options: EYZFlowPlayerOptions) {
@@ -89,6 +99,7 @@ public final class EYZFlowPlayerViewController: UIViewController {
         view.backgroundColor = .black
         buildViews()
         playback.onStateChange = { [weak self] state in self?.render(state) }
+        playback.onSignalChange = { [weak self] _ in self?.renderSkip() }
         render(playback.state)
         backgroundToken = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
@@ -180,10 +191,14 @@ public final class EYZFlowPlayerViewController: UIViewController {
                 // After AVKit laid out its own controls, so they sit above them.
                 self?.addAdView(to: controller)
                 self?.addCastButton(to: controller)
+                self?.addSkipButton(to: controller)
             #elseif canImport(GoogleInteractiveMediaAds)
                 self?.addAdCountdownView(to: controller)
                 self?.syncAdScreen()
             #endif
+            // A new player controller (after casting) has no offer yet.
+            self?.skipOffered = nil
+            self?.renderSkip()
         }
     }
 
@@ -224,6 +239,56 @@ public final class EYZFlowPlayerViewController: UIViewController {
     @objc private func closeTapped() {
         finish()
     }
+
+    // MARK: Skip intro, recap and credits
+
+    /// Offers to skip the signal playback is in: while there is one, the
+    /// config's `features.skipButtons` is on, and no ad break is under way.
+    private func renderSkip() {
+        var signal = playback.config.features.skipButtons ? playback.activeSignal : nil
+        #if canImport(GoogleInteractiveMediaAds)
+            if inAdBreak { signal = nil }
+        #endif
+        guard signal?.id != skipOffered?.id else { return }
+        skipOffered = signal
+        #if os(iOS)
+            skipButton.show(signal)
+            #if canImport(GoogleInteractiveMediaAds)
+                adCountdownBottom?.constant = signal == nil ? -72 : -128
+            #endif
+        #else
+            // AVKit's own skip button over the transport bar, which the
+            // remote focuses.
+            playerController?.contextualActions = signal.map { signal in
+                [UIAction(title: signal.skipLabel()) { [weak self] _ in self?.playback.skipSignal() }]
+            } ?? []
+        #endif
+    }
+
+    #if os(iOS)
+    /// The skip button, over AVKit's player above its bottom bar, styled by
+    /// the config's theme.
+    private func addSkipButton(to controller: AVPlayerViewController) {
+        if skipButton.superview !== controller.view {
+            skipButton.removeFromSuperview()
+            skipButton.apply(theme: playback.config.theme)
+            skipButton.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
+            skipButton.translatesAutoresizingMaskIntoConstraints = false
+            controller.view.addSubview(skipButton)
+            let guide = controller.view.safeAreaLayoutGuide
+            NSLayoutConstraint.activate([
+                skipButton.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
+                skipButton.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -72),
+            ])
+        } else {
+            controller.view.bringSubviewToFront(skipButton)
+        }
+    }
+
+    @objc private func skipTapped() {
+        playback.skipSignal()
+    }
+    #endif
 
     // MARK: Views
 
@@ -430,9 +495,14 @@ extension EYZFlowPlayerViewController {
             adCountdownView.translatesAutoresizingMaskIntoConstraints = false
             controller.view.addSubview(adCountdownView)
             let guide = controller.view.safeAreaLayoutGuide
+            let bottom = adCountdownView.bottomAnchor.constraint(
+                equalTo: guide.bottomAnchor,
+                constant: skipOffered == nil ? -72 : -128
+            )
+            adCountdownBottom = bottom
             NSLayoutConstraint.activate([
                 adCountdownView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
-                adCountdownView.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -72),
+                bottom,
             ])
         } else {
             controller.view.bringSubviewToFront(adCountdownView)
@@ -522,6 +592,7 @@ extension EYZFlowPlayerViewController: AdContainerHost {
             adScreen.render(waiting: inBreak && !adPlaying, adPlaying: adPlaying)
             syncAdScreen()
         #endif
+        renderSkip()
     }
 
     func adCountdownChanged(_ seconds: Int?) {
@@ -791,6 +862,66 @@ public enum EYZFlowPlayer {
         guard let host else { return nil }
         host.present(player, animated: true)
         return player
+    }
+}
+#endif
+
+#if os(iOS)
+/// The skip button: a rounded label over the player in the theme's bar and
+/// text colours, with a thin outline. VoiceOver reads it as a button.
+final class SkipSignalButton: UIButton {
+    private var theme = PlayerTheme()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isHidden = true
+        apply(theme: theme)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    func apply(theme: PlayerTheme) {
+        self.theme = theme
+        let fallback = PlayerTheme()
+        let background = UIColor(css: theme.controlsBarColor) ?? UIColor(css: fallback.controlsBarColor)!
+        let text = UIColor(css: theme.textColor) ?? UIColor(css: fallback.textColor)!
+        var configuration = UIButton.Configuration.filled()
+        configuration.baseBackgroundColor = background
+        configuration.baseForegroundColor = text
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 11, leading: 18, bottom: 11, trailing: 18)
+        configuration.background.cornerRadius = CGFloat(cssLength(theme.borderRadius) ?? 10)
+        configuration.background.strokeColor = text.withAlphaComponent(0.55)
+        configuration.background.strokeWidth = 1
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFontMetrics(forTextStyle: .subheadline)
+                .scaledFont(for: .systemFont(ofSize: 15, weight: .semibold))
+            return attributes
+        }
+        configuration.title = self.configuration?.title
+        self.configuration = configuration
+    }
+
+    /// The signal to offer, or nil to hide.
+    func show(_ signal: StreamSignal?) {
+        guard let signal else {
+            isHidden = true
+            return
+        }
+        configuration?.title = signal.skipLabel()
+        accessibilityLabel = signal.skipLabel()
+        isHidden = false
+    }
+}
+
+extension UIColor {
+    /// A theme colour from the dashboard (`#rrggbb`, `rgba(…)`, …).
+    convenience init?(css value: String) {
+        guard let color = CSSColor(css: value) else { return nil }
+        self.init(red: color.red, green: color.green, blue: color.blue, alpha: color.alpha)
     }
 }
 #endif
