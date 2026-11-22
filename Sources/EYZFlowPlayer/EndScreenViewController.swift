@@ -31,6 +31,8 @@ final class EndScreenViewController: UIViewController {
     private(set) var phase: EndScreenPhase
 
     private let dimView = UIView()
+    private var cornerVideo: [NSLayoutConstraint] = []
+    private var topVideo: [NSLayoutConstraint] = []
     private let gradient = CAGradientLayer()
     private let backButton = UIButton(type: .system)
     private let playButton = UIButton(type: .system)
@@ -93,6 +95,11 @@ final class EndScreenViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         gradient.frame = dimView.bounds
+        let portrait = !isTV && view.bounds.height > view.bounds.width
+        if portrait != topVideo.first?.isActive {
+            NSLayoutConstraint.deactivate(portrait ? cornerVideo : topVideo)
+            NSLayoutConstraint.activate(portrait ? topVideo : cornerVideo)
+        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -130,12 +137,20 @@ final class EndScreenViewController: UIViewController {
         videoView.isHidden = true
         view.addSubview(videoView)
         let guide = view.safeAreaLayoutGuide
-        NSLayoutConstraint.activate([
+        cornerVideo = [
             videoView.topAnchor.constraint(equalTo: guide.topAnchor, constant: isTV ? 40 : 16),
             videoView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: isTV ? -60 : -16),
             videoView.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.34),
-            videoView.heightAnchor.constraint(equalTo: videoView.widthAnchor, multiplier: 9.0 / 16.0),
-        ])
+        ]
+        // Portrait: a third of the width would be tiny; the full width under
+        // the close button instead.
+        topVideo = [
+            videoView.topAnchor.constraint(equalTo: guide.topAnchor, constant: 56),
+            videoView.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
+            videoView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
+        ]
+        videoView.heightAnchor.constraint(equalTo: videoView.widthAnchor, multiplier: 9.0 / 16.0).isActive = true
+        NSLayoutConstraint.activate(cornerVideo)
         #if os(iOS)
             let tap = UITapGestureRecognizer(target: self, action: #selector(backTapped))
             videoView.addGestureRecognizer(tap)
