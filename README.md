@@ -12,8 +12,8 @@ rules built in, the same as the EYZFlow web player and the Flutter package
 - **Chromecast** on iPhone and iPad, to the EYZFlow Cast receiver, with no
   Google Cast SDK,
 - the **player key check** (`POST /v1/player/license`) and its renewal,
-- **playback sessions** for the plan's stream and device limits, with the
-  same messages as the web and Flutter players,
+- **playback sessions** for the plan's stream and device limits (and whether
+  the plan plays ads), with the same messages as the web and Flutter players,
 - **playback quality analytics** ("beats", `POST /v1/player/beat`),
 - **watch progress** for films, saved where the app says,
 - **ads** on iPhone and iPad from the player config, through Google IMA, at
@@ -121,7 +121,18 @@ EYZFlowPlayerOptions(
 )
 ```
 
-With Ads off, or an empty tag, no ad request is made at all. The tag is a
+With Ads off, or an empty tag, no ad request is made at all.
+
+**The viewer's plan:** with `storefrontID` and `drmAuthorization`, the
+playback session (opened for clear streams too) says whether the viewer's plan
+plays ads for the title. `ads: false` means no ads at all, whatever the config
+says. `ads: true`, or no answer (an older backend, no session, a failed
+request), leaves it to the config. The session's `ad_targeting` key-values
+(e.g. `plan=basic-ads`, `access=svod`) go into the tag's `cust_params`; the
+tag's own value wins on the same key. The session answers before the pre-roll
+is requested.
+
+The tag is a
 VAST or VMAP tag, requested through Google IMA, which draws the ad, its
 countdown, skip button and click-through over the player.
 
@@ -195,9 +206,10 @@ await coordinator.close()                                                   // f
 
 `start()` reads the device id, makes the player key check (a refusal fails;
 an unreachable check plays on without a token), starts beats when the key has
-analytics on, opens the playback session for a protected stream with a
-storefront (a limit fails; another error plays on), and builds the access
-header. While playing it renews the player token (a refusal stops playback only
+analytics on, opens the playback session when there is a storefront and the
+viewer's authorization, for clear streams too (a limit fails; another error
+plays on; `planAds` and `adTargeting` hold its ads answer), and builds the
+access header for a protected stream. While playing it renews the player token (a refusal stops playback only
 when the organisation enforces), heartbeats the session (ended elsewhere stops
 playback) and sends beats. A playback error whose text names a licence or limit
 code (`DEVICE_LIMIT`, `APP_NOT_ALLOWED`, …) fails with that code.
@@ -221,7 +233,7 @@ code (`DEVICE_LIMIT`, `APP_NOT_ALLOWED`, …) fails with that code.
 | `BeatCollector`, `BeatTransport`, `HTTPBeatSender`, `Beat` | Analytics beats (interval floor 10 s; 2xx, 400, 401 and 413 count as delivered; unsent errors go with the next beat; a final beat on stop). |
 | `PlaybackEventAdapter` | Feeds `PlaybackEvent`s into a `BeatCollector`. |
 | `PlayerConfig`, `PlayerConfigOverride`, `mergePlayerConfig(_:_:)`, `PlayerConfigClient` | Dashboard configs, merged with an inline override; loaded once per API origin and id, nil (the defaults) on failure or after 5 s. |
-| `PlayerConfig.adTagToPlay`, `PlayerAds`, `AdBreakScheduler`, `AdDriver` | The ad gate, and when ads play (IMA-free; the player's IMA driver does the SDK work). |
+| `PlayerConfig.adTagToPlay`, `adTagForPlayback(configTag:planAds:targeting:)`, `adTagWithTargeting(_:_:)`, `PlayerAds`, `AdBreakScheduler`, `AdDriver` | The ad gate (the config and the viewer's plan), the tag's `cust_params` targeting, and when ads play (IMA-free; the player's IMA driver does the SDK work). |
 | `AdBreak`, `AdBreakSchedule`, `parseHLSAdBreaks(_:)`, `loadHLSAdBreaks(http:master:)` | Ad break markers from the HLS playlists; each played once, none passed by seeking. |
 | `ThumbnailTrack`, `ThumbnailLoader` | WebVTT thumbnail tracks, `at(position)`, loaded once per URL. |
 | `EYZFlowSource`, `EYZFlowSourceType` | The stream source: id, title, poster, DRM header, film or trailer, progress, and its HLS, DASH, FairPlay, Widevine and thumbnail URLs. |
