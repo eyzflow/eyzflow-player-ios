@@ -49,6 +49,17 @@ public final class EYZFlowPlayerViewController: UIViewController {
     /// outside an ad break.
     private let adView = UIView()
     private let adSpinner = UIActivityIndicatorView(style: .large)
+    #endif
+
+    #if os(tvOS) && canImport(GoogleInteractiveMediaAds)
+    /// IMA draws ads here: a screen presented over AVKit's player for each
+    /// ad break. It takes the focus (a skip button) and the remote's presses,
+    /// so the transport bar cannot move the content under the ad.
+    private let adScreen = AdBreakViewController()
+    private var adScreenTransitioning = false
+    #endif
+
+    #if canImport(GoogleInteractiveMediaAds)
     private var inAdBreak = false
     /// "Ad in 5" … "Ad in 1" before a mid-roll, in a corner over the player.
     private let adCountdownView = AdCountdownView()
@@ -63,7 +74,7 @@ public final class EYZFlowPlayerViewController: UIViewController {
         #endif
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             playback.adHost = self
         #endif
     }
@@ -169,6 +180,9 @@ public final class EYZFlowPlayerViewController: UIViewController {
                 // After AVKit laid out its own controls, so they sit above them.
                 self?.addAdView(to: controller)
                 self?.addCastButton(to: controller)
+            #elseif canImport(GoogleInteractiveMediaAds)
+                self?.addAdCountdownView(to: controller)
+                self?.syncAdScreen()
             #endif
         }
     }
@@ -377,41 +391,37 @@ extension EYZFlowPlayerViewController {
 
 // MARK: - Ads
 
-#if os(iOS)
+#if canImport(GoogleInteractiveMediaAds)
 extension EYZFlowPlayerViewController {
+    #if os(iOS)
     /// The ad view, over AVKit's player (and moved to a new player after
     /// casting hands playback back).
     private func addAdView(to controller: AVPlayerViewController) {
-        #if canImport(GoogleInteractiveMediaAds)
-            if adView.superview !== controller.view {
-                adView.removeFromSuperview()
-                adView.backgroundColor = .clear
-                adView.isUserInteractionEnabled = inAdBreak
-                adView.translatesAutoresizingMaskIntoConstraints = false
-                adSpinner.color = .white
-                adSpinner.hidesWhenStopped = true
-                adSpinner.translatesAutoresizingMaskIntoConstraints = false
-                if adSpinner.superview == nil { adView.addSubview(adSpinner) }
-                controller.view.addSubview(adView)
-                NSLayoutConstraint.activate([
-                    adView.topAnchor.constraint(equalTo: controller.view.topAnchor),
-                    adView.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor),
-                    adView.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
-                    adView.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
-                    adSpinner.centerXAnchor.constraint(equalTo: adView.centerXAnchor),
-                    adSpinner.centerYAnchor.constraint(equalTo: adView.centerYAnchor),
-                ])
-            } else {
-                controller.view.bringSubviewToFront(adView)
-            }
-            addAdCountdownView(to: controller)
-            playback.adContainerAppeared()
-        #endif
+        if adView.superview !== controller.view {
+            adView.removeFromSuperview()
+            adView.backgroundColor = .clear
+            adView.isUserInteractionEnabled = inAdBreak
+            adView.translatesAutoresizingMaskIntoConstraints = false
+            adSpinner.color = .white
+            adSpinner.hidesWhenStopped = true
+            adSpinner.translatesAutoresizingMaskIntoConstraints = false
+            if adSpinner.superview == nil { adView.addSubview(adSpinner) }
+            controller.view.addSubview(adView)
+            NSLayoutConstraint.activate([
+                adView.topAnchor.constraint(equalTo: controller.view.topAnchor),
+                adView.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor),
+                adView.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+                adView.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
+                adSpinner.centerXAnchor.constraint(equalTo: adView.centerXAnchor),
+                adSpinner.centerYAnchor.constraint(equalTo: adView.centerYAnchor),
+            ])
+        } else {
+            controller.view.bringSubviewToFront(adView)
+        }
+        addAdCountdownView(to: controller)
+        playback.adContainerAppeared()
     }
-}
 
-#if canImport(GoogleInteractiveMediaAds)
-extension EYZFlowPlayerViewController {
     /// The countdown, over the ad view, above AVKit's bottom bar. It takes
     /// no touches.
     private func addAdCountdownView(to controller: AVPlayerViewController) {
@@ -429,33 +439,100 @@ extension EYZFlowPlayerViewController {
         }
         adCountdownView.show(playback.adCountdown)
     }
+    #else
+    /// The countdown, in AVKit's content overlay: over the picture, under
+    /// the transport bar, never focusable.
+    private func addAdCountdownView(to controller: AVPlayerViewController) {
+        guard let overlay = controller.contentOverlayView else { return }
+        if adCountdownView.superview !== overlay {
+            adCountdownView.removeFromSuperview()
+            adCountdownView.translatesAutoresizingMaskIntoConstraints = false
+            overlay.addSubview(adCountdownView)
+            let guide = overlay.safeAreaLayoutGuide
+            NSLayoutConstraint.activate([
+                adCountdownView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -90),
+                adCountdownView.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -60),
+            ])
+        }
+        adCountdownView.show(playback.adCountdown)
+    }
+
+    /// Presents the ad screen over AVKit's player while a break is under
+    /// way, and dismisses it after. One transition at a time; each one ends
+    /// by checking again.
+    fileprivate func syncAdScreen() {
+        guard !adScreenTransitioning, let playerController else { return }
+        let shown = adScreen.presentingViewController != nil
+        let wanted = inAdBreak && playerShown && !finished && playerController.presentingViewController != nil
+        if wanted, !shown {
+            guard playerController.presentedViewController == nil else { return }
+            adScreenTransitioning = true
+            adScreen.onAppear = { [weak self] in self?.playback.adContainerAppeared() }
+            adScreen.onMenu = { [weak self] in
+                // Menu leaves the player, as it does outside an ad; this screen
+                // showing again closes the playback (`viewDidAppear`).
+                self?.dismiss(animated: true)
+            }
+            adScreen.onPlayPause = { [weak self] in self?.playback.toggleAdPause() }
+            playerController.present(adScreen, animated: false) { [weak self] in
+                self?.adScreenTransitioning = false
+                self?.syncAdScreen()
+            }
+        } else if !wanted, shown {
+            adScreenTransitioning = true
+            adScreen.dismiss(animated: false) { [weak self] in
+                self?.adScreenTransitioning = false
+                self?.syncAdScreen()
+            }
+        }
+    }
+    #endif
 }
 
 extension EYZFlowPlayerViewController: AdContainerHost {
     var adContainer: (view: UIView, viewController: UIViewController)? {
-        guard let playerController, adView.superview === playerController.view, adView.window != nil else { return nil }
-        return (adView, playerController)
+        #if os(iOS)
+            guard let playerController, adView.superview === playerController.view, adView.window != nil else { return nil }
+            return (adView, playerController)
+        #else
+            guard adScreen.viewIfLoaded?.window != nil else { return nil }
+            return (adScreen.view, adScreen)
+        #endif
     }
 
     func adStateChanged(inBreak: Bool, adPlaying: Bool) {
         inAdBreak = inBreak
         // AVKit's controls (seek, tracks, Picture in Picture, AirPlay) and the
-        // Cast button are off during a break; the ad view takes the touches.
+        // Cast button are off during a break.
         playerController?.showsPlaybackControls = !inBreak
-        playerController?.canStartPictureInPictureAutomaticallyFromInline = !inBreak
-        adView.isUserInteractionEnabled = inBreak
-        adView.backgroundColor = adPlaying ? .black : .clear
-        if inBreak, !adPlaying {
-            adSpinner.startAnimating()
-        } else {
-            adSpinner.stopAnimating()
-        }
-        castButton.isHidden = (cast?.devices.isEmpty ?? true) || (cast?.isCasting ?? false) || inBreak
+        #if os(iOS)
+            // The ad view takes the touches.
+            playerController?.canStartPictureInPictureAutomaticallyFromInline = !inBreak
+            adView.isUserInteractionEnabled = inBreak
+            adView.backgroundColor = adPlaying ? .black : .clear
+            if inBreak, !adPlaying {
+                adSpinner.startAnimating()
+            } else {
+                adSpinner.stopAnimating()
+            }
+            castButton.isHidden = (cast?.devices.isEmpty ?? true) || (cast?.isCasting ?? false) || inBreak
+        #else
+            // No scrubbing past the break; the ad screen takes the focus.
+            playerController?.requiresLinearPlayback = inBreak
+            adScreen.render(waiting: inBreak && !adPlaying, adPlaying: adPlaying)
+            syncAdScreen()
+        #endif
     }
 
     func adCountdownChanged(_ seconds: Int?) {
         adCountdownView.show(seconds)
     }
+
+    #if os(tvOS)
+    func adFocusChanged(_ environment: (any UIFocusEnvironment)?) {
+        adScreen.adFocusEnvironment = environment
+    }
+    #endif
 }
 
 /// The notice before a mid-roll: a small rounded label. Not interactive:
@@ -508,6 +585,118 @@ final class AdCountdownView: UIView {
             UIAccessibility.post(notification: .announcement, argument: text)
         }
     }
+}
+
+#if os(tvOS)
+/// The ad screen on Apple TV, presented over AVKit's player for an ad break:
+/// IMA's display container. Focus goes to IMA's focus environment (a
+/// skippable ad's skip button) when it has one. Menu leaves the player,
+/// Play/Pause pauses or resumes the ad, and no press reaches AVKit's player
+/// underneath, so the content cannot be played or moved during the ad.
+final class AdBreakViewController: UIViewController {
+    var onAppear: (() -> Void)?
+    var onMenu: (() -> Void)?
+    var onPlayPause: (() -> Void)?
+
+    /// IMA's `IMAAdDisplayContainer.focusEnvironment`.
+    var adFocusEnvironment: (any UIFocusEnvironment)? {
+        didSet {
+            guard (adFocusEnvironment as AnyObject?) !== (oldValue as AnyObject?) else { return }
+            setNeedsFocusUpdate()
+            updateFocusIfNeeded()
+        }
+    }
+
+    private let spinner = UIActivityIndicatorView(style: .large)
+
+    init() {
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .overFullScreen
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        spinner.color = .white
+        spinner.hidesWhenStopped = true
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        onAppear?()
+        setNeedsFocusUpdate()
+    }
+
+    override var preferredFocusEnvironments: [any UIFocusEnvironment] {
+        if let adFocusEnvironment { return [adFocusEnvironment] }
+        return super.preferredFocusEnvironments
+    }
+
+    /// Waiting for the ad: the paused content shows through, with a spinner.
+    /// Playing: black under IMA's ad.
+    func render(waiting: Bool, adPlaying: Bool) {
+        loadViewIfNeeded()
+        view.backgroundColor = adPlaying ? .black : .clear
+        if waiting {
+            spinner.startAnimating()
+        } else {
+            spinner.stopAnimating()
+        }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = presses.filter { !AdBreakPress.swallowed($0.type) }
+        if !rest.isEmpty { super.pressesBegan(rest, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        for press in presses {
+            switch AdBreakPress.action(for: press.type) {
+            case .leave: onMenu?()
+            case .togglePause: onPlayPause?()
+            case .ignore, .none: break
+            }
+        }
+        let rest = presses.filter { !AdBreakPress.swallowed($0.type) }
+        if !rest.isEmpty { super.pressesEnded(rest, with: event) }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = presses.filter { !AdBreakPress.swallowed($0.type) }
+        if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
+    }
+
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = presses.filter { !AdBreakPress.swallowed($0.type) }
+        if !rest.isEmpty { super.pressesChanged(rest, with: event) }
+    }
+}
+
+/// The ad screen's view of a press: what `AdBreakRemoteAction` decides.
+enum AdBreakPress {
+    static func action(for type: UIPress.PressType) -> AdBreakRemoteAction? {
+        let button: AdBreakRemoteButton = switch type {
+        case .menu: .menu
+        case .playPause: .playPause
+        case .select: .select
+        default: .other
+        }
+        return AdBreakRemoteAction(button)
+    }
+
+    /// Not passed on to AVKit's player underneath.
+    static func swallowed(_ type: UIPress.PressType) -> Bool { action(for: type) != nil }
 }
 #endif
 #endif

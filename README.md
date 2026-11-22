@@ -16,13 +16,16 @@ rules built in, the same as the EYZFlow web player and the Flutter package
   the plan plays ads), with the same messages as the web and Flutter players,
 - **playback quality analytics** ("beats", `POST /v1/player/beat`),
 - **watch progress** for films, saved where the app says,
-- **ads** on iPhone and iPad from the player config, through Google IMA, at
-  the stream's ad break markers.
+- **ads** on iPhone, iPad and Apple TV from the player config, through
+  Google IMA, at the stream's ad break markers.
 
 Requirements: iOS 16, iPadOS 16, tvOS 16, Swift 6. One third-party
-dependency: Google's
-[IMA SDK for iOS](https://github.com/googleads/swift-package-manager-google-interactive-media-ads-ios)
-(`GoogleInteractiveMediaAds`, linked on iOS only).
+dependency, Google's IMA SDK, as two packages:
+[for iOS](https://github.com/googleads/swift-package-manager-google-interactive-media-ads-ios)
+(linked on iOS only) and
+[for tvOS](https://github.com/googleads/swift-package-manager-google-interactive-media-ads-tvos)
+(`GoogleInteractiveMediaAdsTvOS`, linked on tvOS only). Both frameworks are
+the module `GoogleInteractiveMediaAds`.
 
 ## Install
 
@@ -104,7 +107,7 @@ and when the app leaves, and as completed at the end. Trailers save nothing.
 
 ### Ads
 
-The player plays ads on iPhone and iPad when its config has **Ads** on and an
+The player plays ads on iPhone, iPad and Apple TV when its config has **Ads** on and an
 **Ad tag URL** (dashboard: Player → Configs; `features.ads` and
 `ads.adTagUrl`), either from `configID` or from `config`, which wins over the
 dashboard config:
@@ -152,10 +155,10 @@ countdown, skip button and click-through over the player.
   off. No ads play on AirPlay or while casting, and when casting hands the
   film back, neither the pre-roll nor a break already played plays again.
 - **Countdown before a mid-roll:** a small corner notice, "Ad in 5" … "Ad
-  in 1", for the last 5 s before each mid-roll (`ads.countdownSeconds` in the
-  config sets the length, 1–30; missing or out of range falls back to 5 or
-  is clamped; `playback.adCountdownLength` changes it while playing) (never a pre-roll or
+  in 1", for the last seconds before each mid-roll (never a pre-roll or
   post-roll), in en, de, fr or nl by the device language, English otherwise.
+  The length is 5 s, or the config's `ads.countdownSeconds` (1–30, rounded
+  and clamped); `playback.adCountdownLength` changes it while playing.
   It counts towards the unplayed markers (a marker passed by seeking gets it
   again when approached later), or on a stream without markers towards a
   VMAP's mid-roll cue points (one played through does not come back after a
@@ -165,7 +168,15 @@ countdown, skip button and click-through over the player.
   in the config turns it off (`false`); missing means on, for configs saved
   before it. `playback.showsAdCountdown` changes it while playing, without
   reloading the stream.
-- Apple TV plays no ads (IMA for tvOS is a separate SDK).
+- **Apple TV:** the same rules (markers, the plan, the countdown, no ads
+  on AirPlay), through Google's IMA SDK for tvOS. Each break shows on a
+  screen presented over AVKit's player, which takes the focus and the
+  remote: the transport bar is off and scrubbing is locked during the ad,
+  a skippable ad's skip button takes the focus (IMA's `focusEnvironment`),
+  Play/Pause pauses or resumes the ad, Select does nothing (no click-through
+  on Apple TV), and Menu leaves the player as it does outside an ad. The
+  countdown sits in AVKit's content overlay, over the picture and under the
+  transport bar, and never takes the focus.
 - `EYZFlowPlayback` on its own (an app with its own player UI) plays no
   ads: they need the player screen's ad layer.
 - Events: `adBreakStarted` and `adBreakEnded` around each break, including

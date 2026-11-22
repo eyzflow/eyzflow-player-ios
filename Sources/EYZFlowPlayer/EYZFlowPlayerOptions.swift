@@ -21,7 +21,7 @@ public struct EYZFlowPlayerOptions: Sendable {
     /// allowed apps.
     public var playerKey: String?
     /// A player config from the dashboard (Player → Configs), `cfg_…`. Its
-    /// ads (`features.ads` and `ads.adTagUrl`) play on iPhone and iPad.
+    /// ads (`features.ads` and `ads.adTagUrl`) play on iPhone, iPad and Apple TV.
     public var configID: String?
     /// Wins over the dashboard config, field by field, as the web player's
     /// inline `config`; e.g. `PlayerConfigOverride(features: .init(ads: true),

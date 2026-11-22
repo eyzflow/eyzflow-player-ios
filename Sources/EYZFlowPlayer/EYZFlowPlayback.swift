@@ -2,7 +2,7 @@
 import AVFoundation
 import EYZFlowPlayerCore
 import Foundation
-#if os(iOS) && canImport(GoogleInteractiveMediaAds)
+#if canImport(GoogleInteractiveMediaAds)
 import UIKit
 #endif
 
@@ -49,7 +49,7 @@ public final class EYZFlowPlayback {
     private var resumeSeconds: Double?
     private var accessHeader: String?
 
-    #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+    #if canImport(GoogleInteractiveMediaAds)
     /// Shows the ads; without one (an app with its own player UI) no ads
     /// play.
     weak var adHost: (any AdContainerHost)?
@@ -128,7 +128,7 @@ public final class EYZFlowPlayback {
     /// the player has the stream, or the playback failed.
     public func start() async {
         guard state == .loading, player == nil else { return }
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             async let adConfig = Self.adConfig(for: options)
             // The session answers before any ad request: the pre-roll is
             // requested only once the player is mounted, after this.
@@ -184,7 +184,7 @@ public final class EYZFlowPlayback {
     /// the TV counts as the phone's one stream). Nil when nothing plays.
     public func handOverToCast() -> CastMedia? {
         guard state == .playing, let player else { return nil }
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             if adScheduler?.inBreak == true { return nil }
         #endif
         let position = currentPosition
@@ -266,7 +266,7 @@ public final class EYZFlowPlayback {
 
     /// Plays the content, after a pre-roll if there is one.
     private func startContent(_ player: AVPlayer) {
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             if let scheduler = makeAdScheduler(for: player) {
                 Task { [weak self] in
                     await scheduler.beforeContent()
@@ -352,7 +352,7 @@ public final class EYZFlowPlayback {
     }
 
     private func sync() {
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             defer { updateAdCountdown() }
         #endif
         guard let player, let item else { return }
@@ -404,7 +404,7 @@ public final class EYZFlowPlayback {
         lastTickPosition = position
         if tracker.isPlaying { recorder?.report(position) }
         sync()
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             adSeeking = false
             adScheduler?.contentPosition(position)
             updateAdCountdown()
@@ -415,7 +415,7 @@ public final class EYZFlowPlayback {
         let from = lastTickPosition
         let to = currentPosition
         lastTickPosition = to
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             adScheduler?.contentSeeked(to: to)
             adSeeking = true
             updateAdCountdown()
@@ -471,7 +471,7 @@ public final class EYZFlowPlayback {
     private func reachedEnd() {
         tracker.reachedEnd(position: currentPosition, duration: currentDuration)
         recorder?.finish()
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             // A VMAP's post-roll, on a stream without markers.
             if let adScheduler { Task { await adScheduler.contentCompleted() } }
         #endif
@@ -502,7 +502,7 @@ public final class EYZFlowPlayback {
     }
 
     private func teardown() {
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             if let adScheduler {
                 self.adScheduler = nil
                 adScheduler.dispose()
@@ -522,7 +522,7 @@ public final class EYZFlowPlayback {
         item = nil
         keyLoader?.onError = nil
         keyLoader = nil
-        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+        #if canImport(GoogleInteractiveMediaAds)
             updateAdCountdown()
         #endif
     }
@@ -530,7 +530,7 @@ public final class EYZFlowPlayback {
 
 // MARK: - Ads
 
-#if os(iOS) && canImport(GoogleInteractiveMediaAds)
+#if canImport(GoogleInteractiveMediaAds)
 extension EYZFlowPlayback {
     /// The config for the ads: the dashboard config (when `configID` is set)
     /// with `options.config` over it. Its `adTagToPlay` is nil when
@@ -581,6 +581,13 @@ extension EYZFlowPlayback {
     func adContainerAppeared() {
         adDriver?.containerAppeared()
     }
+
+    #if os(tvOS)
+    /// Play/Pause on the Siri Remote during an ad: pauses or resumes the ad.
+    func toggleAdPause() {
+        adDriver?.togglePause()
+    }
+    #endif
 
     /// Works out the countdown before the next mid-roll and passes on a
     /// change. Only while ads play for this viewer (an ad scheduler exists),

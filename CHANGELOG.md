@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Ads on Apple TV, through Google's IMA SDK for tvOS (new dependency,
+  `GoogleInteractiveMediaAdsTvOS`, tvOS only), with the same rules as on
+  iPhone: the stream's markers, the viewer's plan and targeting, the
+  countdown, no ads on AirPlay. During a break the transport bar is off and
+  scrubbing locked; a skippable ad's skip button takes the focus;
+  Play/Pause pauses the ad, Menu leaves the player.
+
 ## 0.2.0
 
 - Ads on iPhone and iPad through Google IMA, when the player config has
