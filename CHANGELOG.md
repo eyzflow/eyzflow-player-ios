@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Ads on iPhone and iPad through Google IMA, when the player config has
   `features.ads` on and an `ads.adTagUrl` (from `configID`, or the new
@@ -10,6 +10,15 @@
   mid-rolls when playback reaches them, each once, none when passed by
   seeking; markers win over a VMAP's own schedule. Streams without markers
   follow the tag (VAST pre-roll, or a VMAP's pre-, mid- and post-rolls).
+- Ads follow the viewer's plan: the playback session's `ads` and
+  `ad_targeting` (`PlaybackCoordinator.planAds` / `adTargeting`). `ads: false`
+  makes no ad request at all (no pre-roll, no mid-rolls), whatever the
+  config says; `true` or no answer (an older backend, no session) leaves it
+  to the config. The targeting goes into the tag's `cust_params`, the tag's
+  own values winning (`adTagForPlayback(configTag:planAds:targeting:)`,
+  `adTagWithTargeting(_:_:)`). Clear streams (trailers) now open a playback
+  session too when there is a `storefrontID` and `drmAuthorization`, so the
+  plan's stream limits count them.
 - AVKit's controls and the Cast button are off during an ad; no ads on
   AirPlay; casting hands back without repeating played breaks.
 - `PlaybackEvent.adBreakStarted` and `.adBreakEnded` (new cases: a `switch`
