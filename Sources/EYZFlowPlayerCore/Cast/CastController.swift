@@ -57,7 +57,7 @@ public enum CastEndReason: Sendable, Equatable {
 }
 
 /// Finds TVs, casts one film to one of them, and reports how it ends. The
-/// Flutter package's `EyzflowCastController`.
+/// Flutter package's `EYZFlowCastController`.
 @MainActor
 public final class CastController {
     private let backend: any CastBackend

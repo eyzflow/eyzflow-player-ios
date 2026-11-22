@@ -2,7 +2,7 @@ import Foundation
 
 /// What kind of playback an [`EYZFlowSource`] is: a trailer (never
 /// DRM-protected) or a film (played with FairPlay and the source's
-/// `drmAccessHeader`). The Flutter package's `EyzflowTrailer` / `EyzflowFilm`.
+/// `drmAccessHeader`). The Flutter package's `EYZFlowTrailer` / `EYZFlowFilm`.
 public enum EYZFlowSourceType: Sendable, Hashable {
     /// A trailer, identified by its own catalogue id.
     case trailer(catalogueID: String)
@@ -24,7 +24,7 @@ public enum EYZFlowSourceType: Sendable, Hashable {
 }
 
 /// What to play, and the stream and DRM URLs derived from its id. The
-/// Flutter package's `EyzflowSource` (same fields, same URLs).
+/// Flutter package's `EYZFlowSource` (same fields, same URLs).
 public struct EYZFlowSource: Sendable, Hashable {
     /// The stream id.
     public var id: String
