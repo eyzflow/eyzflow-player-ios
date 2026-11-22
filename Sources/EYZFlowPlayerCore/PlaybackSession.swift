@@ -61,10 +61,24 @@ public struct PlaybackSession: Sendable, Hashable {
     /// Nil while the storefront's limits are off: nothing to heartbeat or close.
     public var id: String?
     public var heartbeatInterval: Duration
+    /// Whether the viewer's plan plays ads for this title: its plan asks for
+    /// ads, or the product is AVOD/FAST. Nil when the backend did not say (an
+    /// older backend): the player config decides.
+    public var ads: Bool?
+    /// Key-values for the ad request's `cust_params`, e.g.
+    /// `["plan": "basic-ads", "access": "svod"]`.
+    public var adTargeting: [String: String]
 
-    public init(id: String?, heartbeatInterval: Duration = .seconds(30)) {
+    public init(
+        id: String?,
+        heartbeatInterval: Duration = .seconds(30),
+        ads: Bool? = nil,
+        adTargeting: [String: String] = [:]
+    ) {
         self.id = id
         self.heartbeatInterval = heartbeatInterval
+        self.ads = ads
+        self.adTargeting = adTargeting
     }
 }
 
@@ -149,11 +163,19 @@ public struct PlaybackSessionClient: Sendable {
         let map = decoded.objectValue ?? [:]
         let id = map["id"]?.stringValue
         let interval = map["heartbeat_interval_seconds"]?.numberValue
+        let ads = map["ads"]?.boolValue
+        var targeting: [String: String] = [:]
+        for (key, value) in map["ad_targeting"]?.objectValue ?? [:] {
+            // String values only, as the web player reads them.
+            if let text = value.stringValue, !text.isEmpty, !key.isEmpty { targeting[key] = text }
+        }
         return PlaybackSession(
             id: id?.isEmpty == false ? id : nil,
             heartbeatInterval: .seconds(
                 interval.map { $0 > 0 ? Int($0.rounded()) : 30 } ?? 30
-            )
+            ),
+            ads: ads,
+            adTargeting: targeting
         )
     }
 

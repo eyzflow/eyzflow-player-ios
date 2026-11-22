@@ -99,8 +99,14 @@ public final class EYZFlowPlayback {
         guard state == .loading, player == nil else { return }
         #if os(iOS) && canImport(GoogleInteractiveMediaAds)
             async let adTag = Self.adTag(for: options)
+            // The session answers before any ad request: the pre-roll is
+            // requested only once the player is mounted, after this.
             await coordinator.start()
-            setUpAds(adTag: await adTag)
+            setUpAds(adTag: adTagForPlayback(
+                configTag: await adTag,
+                planAds: coordinator.planAds,
+                targeting: coordinator.adTargeting
+            ))
         #else
             await coordinator.start()
         #endif
@@ -493,6 +499,8 @@ extension EYZFlowPlayback {
         return config.merged(with: options.config).adTagToPlay
     }
 
+    /// `adTag` is the tag to request, the plan's rule and targeting applied;
+    /// nil plays no ads (no pre-roll, no mid-rolls).
     fileprivate func setUpAds(adTag: String?) {
         guard let adTag, ads == nil else { return }
         let ads = PlayerAds(adTagURL: adTag)

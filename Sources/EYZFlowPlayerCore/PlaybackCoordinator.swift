@@ -30,8 +30,9 @@ public enum EYZFlowPlayerStatus: Sendable, Hashable {
 /// What one playback is asked to do.
 public struct PlaybackCoordinatorConfig: Sendable, Hashable {
     public var streamID: String
-    /// A feature-length source: DRM, and so a playback session. Trailers play
-    /// without either.
+    /// A feature-length source: DRM. Trailers play without it. Either opens a
+    /// playback session when there is a storefront and the viewer's
+    /// authorization.
     public var isProtected: Bool
     public var playerKey: String?
     public var configID: String?
@@ -139,6 +140,13 @@ public final class PlaybackCoordinator {
         self.log = log
     }
 
+    /// The playback session's `ads`: false when the viewer's plan plays no
+    /// ads. Nil without an answer (no session, an older backend, a failed
+    /// request): the player config decides. Set before `status` is `.ready`.
+    public private(set) var planAds: Bool?
+    /// The playback session's `ad_targeting`, for the ad tag's `cust_params`.
+    public private(set) var adTargeting: [String: String] = [:]
+
     /// The player token, while the key check has granted one.
     public var playerToken: String? { license?.token }
 
@@ -196,8 +204,12 @@ public final class PlaybackCoordinator {
             }
         }
 
+        // A storefront viewer (signed in, with a storefront): the playback
+        // session counts this stream against the plan's limits and says
+        // whether the plan plays ads. Opened for clear streams too, for the
+        // ads answer; only protected streams get the DRM access header.
         var accessHeader: String?
-        if config.isProtected, let authorization = config.drmAuthorization, !authorization.isEmpty {
+        if let authorization = config.drmAuthorization, !authorization.isEmpty {
             let storefrontID = config.storefrontID.flatMap { $0.isEmpty ? nil : $0 }
             var parameters = config.drmParameters
             if let storefrontID { parameters["storefront_id"] = .string(storefrontID) }
@@ -221,6 +233,8 @@ public final class PlaybackCoordinator {
                         await endAll()
                         return
                     }
+                    planAds = session.ads
+                    adTargeting = session.adTargeting
                     if let id = session.id {
                         parameters["playback_session_id"] = .string(id)
                         startHeartbeat(target: target, sessionID: id, interval: session.heartbeatInterval)
@@ -230,13 +244,16 @@ public final class PlaybackCoordinator {
                     await endAll()
                     return
                 } catch {
-                    // Not a limit: carry on, the licence request enforces limits.
+                    // Not a limit: carry on, the licence request enforces
+                    // limits; ads follow the player config.
                     log("[eyzflow-player] playback session failed: \(error)")
                 }
             }
-            // Fixed for this load: the player takes the header once.
-            parameters["player_token"] = license.map { .string($0.token) }
-            accessHeader = buildAccessToken(authorization, parameters: parameters)
+            if config.isProtected {
+                // Fixed for this load: the player takes the header once.
+                parameters["player_token"] = license.map { .string($0.token) }
+                accessHeader = buildAccessToken(authorization, parameters: parameters)
+            }
         }
 
         if disposed {
