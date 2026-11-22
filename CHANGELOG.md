@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Skip intro, recap and credits (EYF-215). The signals marked on a stream
   (Stream → Signals) are read from its HLS playlist. While playback is in
