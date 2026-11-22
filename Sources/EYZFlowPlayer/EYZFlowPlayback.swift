@@ -58,6 +58,37 @@ public final class EYZFlowPlayback {
     /// The current player's ad breaks.
     private var adScheduler: AdBreakScheduler?
     private var adDriver: IMAAdDriver?
+    /// A time jump (a seek) since the last position report: the countdown
+    /// hides until the next one.
+    private var adSeeking = false
+
+    /// Shows the countdown before a mid-roll ("Ad in 5" … "Ad in 1") when ads
+    /// play for this viewer. Set from the player config's
+    /// `features.adCountdown` (missing is on) when the playback starts; the
+    /// app may change it any time after, without reloading the stream.
+    public var showsAdCountdown = true {
+        didSet { if showsAdCountdown != oldValue { updateAdCountdown() } }
+    }
+
+    /// How many seconds before a mid-roll the countdown starts (1…30). Set
+    /// from the config's `ads.countdownSeconds` (missing: 5) when the
+    /// playback starts; the app may change it any time after, without
+    /// reloading the stream. Values outside 1…30 are clamped.
+    public var adCountdownLength = AdCountdown.defaultLength {
+        didSet {
+            // Assigning here does not call didSet again.
+            adCountdownLength = AdCountdown.length(Double(adCountdownLength))
+            if adCountdownLength != oldValue { updateAdCountdown() }
+        }
+    }
+
+    /// The seconds (`adCountdownLength` … 1) until a mid-roll starts while its countdown shows;
+    /// otherwise nil. Hidden while paused, seeking, during a break, on AirPlay
+    /// or casting, and when the viewer seeks past the break.
+    public private(set) var adCountdown: Int?
+
+    /// Called when `adCountdown` changes. The player screen shows it itself.
+    public var onAdCountdownChange: (@MainActor (Int?) -> Void)?
     #endif
 
     public init(options: EYZFlowPlayerOptions) {
@@ -98,9 +129,18 @@ public final class EYZFlowPlayback {
     public func start() async {
         guard state == .loading, player == nil else { return }
         #if os(iOS) && canImport(GoogleInteractiveMediaAds)
-            async let adTag = Self.adTag(for: options)
+            async let adConfig = Self.adConfig(for: options)
+            // The session answers before any ad request: the pre-roll is
+            // requested only once the player is mounted, after this.
             await coordinator.start()
-            setUpAds(adTag: await adTag)
+            let config = await adConfig
+            showsAdCountdown = config.features.adCountdown
+            adCountdownLength = config.ads?.countdownLength ?? AdCountdown.defaultLength
+            setUpAds(adTag: adTagForPlayback(
+                configTag: config.adTagToPlay,
+                planAds: coordinator.planAds,
+                targeting: coordinator.adTargeting
+            ))
         #else
             await coordinator.start()
         #endif
@@ -312,6 +352,9 @@ public final class EYZFlowPlayback {
     }
 
     private func sync() {
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            defer { updateAdCountdown() }
+        #endif
         guard let player, let item else { return }
         let waiting = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
         let isBuffering = waiting && player.reasonForWaitingToPlay != .noItemToPlay
@@ -362,7 +405,9 @@ public final class EYZFlowPlayback {
         if tracker.isPlaying { recorder?.report(position) }
         sync()
         #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            adSeeking = false
             adScheduler?.contentPosition(position)
+            updateAdCountdown()
         #endif
     }
 
@@ -372,6 +417,8 @@ public final class EYZFlowPlayback {
         lastTickPosition = to
         #if os(iOS) && canImport(GoogleInteractiveMediaAds)
             adScheduler?.contentSeeked(to: to)
+            adSeeking = true
+            updateAdCountdown()
         #endif
         guard abs((to - from).inSecondsDouble) >= 1 else { return }
         tracker.seeked(from: from, to: to, duration: currentDuration)
@@ -462,6 +509,7 @@ public final class EYZFlowPlayback {
                 adDriver = nil
                 adHost?.adStateChanged(inBreak: false, adPlaying: false)
             }
+            adSeeking = false
         #endif
         if let timeObserver { player?.removeTimeObserver(timeObserver) }
         timeObserver = nil
@@ -474,6 +522,9 @@ public final class EYZFlowPlayback {
         item = nil
         keyLoader?.onError = nil
         keyLoader = nil
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            updateAdCountdown()
+        #endif
     }
 }
 
@@ -481,18 +532,21 @@ public final class EYZFlowPlayback {
 
 #if os(iOS) && canImport(GoogleInteractiveMediaAds)
 extension EYZFlowPlayback {
-    /// The config's ad tag: the dashboard config (when `configID` is set)
-    /// with `options.config` over it. Nil when `features.ads` is off or the
-    /// tag is empty: then no ad request is made at all.
-    fileprivate static func adTag(for options: EYZFlowPlayerOptions) async -> String? {
+    /// The config for the ads: the dashboard config (when `configID` is set)
+    /// with `options.config` over it. Its `adTagToPlay` is nil when
+    /// `features.ads` is off or the tag is empty: then no ad request is made
+    /// at all.
+    fileprivate static func adConfig(for options: EYZFlowPlayerOptions) async -> PlayerConfig {
         var config = PlayerConfig.defaults
         if let id = options.configID, !id.isEmpty,
            let remote = await PlayerConfigClient(endpoints: options.endpoints).load(id) {
             config = remote
         }
-        return config.merged(with: options.config).adTagToPlay
+        return config.merged(with: options.config)
     }
 
+    /// `adTag` is the tag to request, the plan's rule and targeting applied;
+    /// nil plays no ads (no pre-roll, no mid-rolls).
     fileprivate func setUpAds(adTag: String?) {
         guard let adTag, ads == nil else { return }
         let ads = PlayerAds(adTagURL: adTag)
@@ -516,6 +570,7 @@ extension EYZFlowPlayback {
         scheduler.onChange = { [weak self, weak scheduler] in
             guard let self, let scheduler, scheduler === self.adScheduler else { return }
             self.adHost?.adStateChanged(inBreak: scheduler.inBreak, adPlaying: scheduler.adPlaying)
+            self.updateAdCountdown()
         }
         adDriver = driver
         adScheduler = scheduler
@@ -525,6 +580,22 @@ extension EYZFlowPlayback {
     /// The ad host's view is on screen: a request waiting for it goes.
     func adContainerAppeared() {
         adDriver?.containerAppeared()
+    }
+
+    /// Works out the countdown before the next mid-roll and passes on a
+    /// change. Only while ads play for this viewer (an ad scheduler exists),
+    /// the config has it on, and the content plays (or buffers) on this
+    /// device, not seeking.
+    fileprivate func updateAdCountdown() {
+        var seconds: Int?
+        if showsAdCountdown, !adSeeking, state == .playing, let player, let adScheduler,
+           player.timeControlStatus != .paused {
+            seconds = adScheduler.countdown(at: currentPosition, length: adCountdownLength)
+        }
+        guard seconds != adCountdown else { return }
+        adCountdown = seconds
+        adHost?.adCountdownChanged(seconds)
+        onAdCountdownChange?(seconds)
     }
 }
 #endif

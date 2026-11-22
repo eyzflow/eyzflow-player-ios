@@ -223,16 +223,78 @@ struct PlaybackCoordinatorTests {
         await h.coordinator.close()
     }
 
-    @Test("a trailer plays with no DRM header and no session")
+    @Test("a trailer opens a session for the ads answer, with no DRM header")
     func trailer() async {
-        let h = Harness(config: PlaybackCoordinatorConfig(
+        let backend = FakeBackend()
+        backend.open.value = { _ in
+            .json(["id": "ps_1", "ads": false, "ad_targeting": ["plan": "premium"]], 201)
+        }
+        let h = Harness(backend, config: PlaybackCoordinatorConfig(
             streamID: "trailer-1", isProtected: false, drmAuthorization: "Bearer viewer", storefrontID: "sf"
+        ))
+        await h.coordinator.start()
+
+        #expect(h.backend.calls == ["POST /v1/content/storefront/sf/playback-sessions"])
+        #expect(h.backend.http.requests[0].json?["stream_id"] == "trailer-1")
+        #expect(h.coordinator.status == .ready(accessHeader: nil))
+        #expect(h.coordinator.planAds == false)
+        #expect(h.coordinator.adTargeting == ["plan": "premium"])
+        await h.coordinator.close()
+        #expect(h.backend.calls.last == "DELETE /v1/content/storefront/sf/playback-sessions/ps_1")
+    }
+
+    @Test("a clear stream without the viewer's authorization opens no session")
+    func clearWithoutAuthorization() async {
+        let h = Harness(config: PlaybackCoordinatorConfig(
+            streamID: "trailer-1", isProtected: false, storefrontID: "sf"
         ))
         await h.coordinator.start()
 
         #expect(h.backend.calls.isEmpty)
         #expect(h.coordinator.status == .ready(accessHeader: nil))
+        #expect(h.coordinator.planAds == nil)
         await h.coordinator.close()
+    }
+
+    @Test("a clear stream at its limit fails with that limit")
+    func clearLimit() async {
+        let backend = FakeBackend()
+        backend.open.value = { _ in .json(["code": "STREAM_LIMIT"], 403) }
+        let h = Harness(backend, config: PlaybackCoordinatorConfig(
+            streamID: "trailer-1", isProtected: false, drmAuthorization: "Bearer viewer", storefrontID: "sf"
+        ))
+        await h.coordinator.start()
+
+        #expect(h.limits.map(\.code) == [.streamLimit])
+        #expect(h.isFailed)
+        await h.coordinator.close()
+    }
+
+    @Test("the session's ads answer is kept, and is nil from an older backend or a failed request")
+    func planAds() async {
+        let backend = FakeBackend()
+        backend.open.value = { _ in
+            .json(["id": "ps_1", "ads": true, "ad_targeting": ["plan": "basic-ads", "access": "svod"]], 201)
+        }
+        let on = Harness(backend)
+        await on.coordinator.start()
+        #expect(on.coordinator.planAds == true)
+        #expect(on.coordinator.adTargeting == ["plan": "basic-ads", "access": "svod"])
+        await on.coordinator.close()
+
+        let older = Harness()
+        await older.coordinator.start()
+        #expect(older.coordinator.planAds == nil)
+        #expect(older.coordinator.adTargeting.isEmpty)
+        await older.coordinator.close()
+
+        let failing = FakeBackend()
+        failing.open.value = { _ in FakeResponse(500, "oops") }
+        let failed = Harness(failing)
+        await failed.coordinator.start()
+        #expect(failed.isReady)
+        #expect(failed.coordinator.planAds == nil)
+        await failed.coordinator.close()
     }
 
     @Test("a DRM licence refused for the limit fails with that limit")

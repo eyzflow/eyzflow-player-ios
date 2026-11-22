@@ -42,6 +42,43 @@ struct PlaybackSessionOpenTests {
         #expect(session.heartbeatInterval == .seconds(30))
     }
 
+    @Test("reads the plan's ads answer and its targeting")
+    func adsAnswer() async throws {
+        let body: JSONValue = [
+            "id": "ps_1",
+            "ads": true,
+            "ad_targeting": ["plan": "basic-ads", "access": "svod", "count": 3, "flag": true, "empty": "", "nested": ["a": "b"]],
+        ]
+        let client = PlaybackSessionClient(http: FakeHTTPClient { _ in .json(body, 201) })
+
+        let session = try await client.open(target, streamID: "s", platform: .ios)
+
+        #expect(session.ads == true)
+        #expect(session.adTargeting == ["plan": "basic-ads", "access": "svod"])
+    }
+
+    @Test("ads false is kept; missing or not a boolean is nil")
+    func adsMissing() async throws {
+        func open(_ body: JSONValue) async throws -> PlaybackSession {
+            try await PlaybackSessionClient(http: FakeHTTPClient { _ in .json(body) })
+                .open(target, streamID: "s", platform: .ios)
+        }
+        let off = try await open(["id": "ps_1", "ads": false])
+        #expect(off.ads == false)
+        #expect(off.adTargeting.isEmpty)
+
+        let older = try await open(["id": "ps_1"])
+        #expect(older.ads == nil)
+        #expect(older.adTargeting.isEmpty)
+
+        let odd = try await open(["id": "ps_1", "ads": "yes", "ad_targeting": ["x", "y"]])
+        #expect(odd.ads == nil)
+        #expect(odd.adTargeting.isEmpty)
+
+        let null = try await open(["id": nil, "ads": nil, "ad_targeting": nil])
+        #expect(null.ads == nil)
+    }
+
     @Test("throws the limit with its body")
     func limit() async throws {
         let body: JSONValue = ["code": "STREAM_LIMIT", "message": "server text", "sessions": [["device_name": "Phone"]]]

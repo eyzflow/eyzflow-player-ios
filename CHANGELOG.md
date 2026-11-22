@@ -16,6 +16,14 @@
   over `PlaybackEvent` needs them); analytics leave ad time out of played,
   paused and startup time (`BeatCollector.beginAd()` / `endAd()`).
 - New dependency: Google's `GoogleInteractiveMediaAds` (iOS only).
+- A countdown before each mid-roll, "Ad in 5" … "Ad in 1" (en, de, fr, nl),
+  when ads play for the viewer: at the markers, or a VMAP's mid-roll cue
+  points on streams without them. `features.adCountdown: false` turns it off
+  (missing is on); `EYZFlowPlayback.showsAdCountdown` changes it while
+  playing.
+- The countdown's length from the config's `ads.countdownSeconds` (1–30,
+  rounded and clamped; 5 when missing); `EYZFlowPlayback.adCountdownLength`
+  changes it while playing.
 
 ## 0.1.0
 

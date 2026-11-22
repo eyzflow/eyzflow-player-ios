@@ -115,6 +115,9 @@ public final class AdBreakScheduler {
     public private(set) var adPlaying = false
     private var pausedContent = false
     private var cuePoints: [Duration] = []
+    /// A VMAP's mid-roll cue points, for the countdown before them (no
+    /// markers only).
+    private var cueSchedule = AdCuePointSchedule()
     private var guardTimer: (any PlaybackTimer)?
     private var hold: Gate?
     private var lastPosition: Duration?
@@ -142,6 +145,18 @@ public final class AdBreakScheduler {
     /// requested, playing, or (a VMAP without markers) still scheduled.
     public var containerNeeded: Bool { requesting || managerAlive }
 
+    /// The countdown before the next mid-roll at `position`: whole seconds
+    /// (`length` … 1) or nil for no notice. It counts towards the stream's unplayed
+    /// mid-roll markers, or on a stream without markers a VMAP's mid-roll cue
+    /// points not yet played through. Nil during a break, while no ads may
+    /// start (AirPlay), and once disposed. The player hides it while paused
+    /// or seeking, and when the config turns it off.
+    public func countdown(at position: Duration, length: Int = AdCountdown.defaultLength) -> Int? {
+        guard !disposed, !inBreak, !requesting, !adPlaying, !suppressed() else { return nil }
+        let starts = ads.schedule.hasBreaks ? ads.schedule.upcomingMidrollStarts : cueSchedule.upcoming
+        return AdCountdown.seconds(at: position, breakStarts: starts, length: length)
+    }
+
     /// Awaited before the content first plays: a pre-roll, if there is one,
     /// plays first. Returns when it is over, or at once when there is none.
     public func beforeContent() async {
@@ -167,6 +182,7 @@ public final class AdBreakScheduler {
     public func contentPosition(_ position: Duration) {
         let previous = lastPosition
         lastPosition = position
+        if let previous { cueSchedule.pass(from: previous, to: position) }
         guard !disposed, let previous, ads.schedule.hasBreaks, !inBreak, !requesting, !suppressed() else { return }
         guard ads.due(from: previous, to: position) != nil else { return }
         mode = .markers
@@ -207,6 +223,7 @@ public final class AdBreakScheduler {
             return
         }
         self.cuePoints = cuePoints
+        if mode == .tag { cueSchedule.set(cuePoints) }
         let hasPreroll = cuePoints.isEmpty || cuePoints.contains(.zero)
         if mode == .markers, !hasPreroll {
             // A VMAP with no pre-roll: nothing for this marker.
@@ -336,6 +353,7 @@ public final class AdBreakScheduler {
         requesting = false
         managerAlive = false
         cuePoints = []
+        cueSchedule.set([])
         driver?.discardAds()
     }
 }

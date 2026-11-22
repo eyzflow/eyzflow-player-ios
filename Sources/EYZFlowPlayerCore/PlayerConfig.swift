@@ -100,6 +100,9 @@ public struct PlayerFeatures: Sendable, Hashable {
     public var captions: Bool
     public var pip: Bool
     public var ads: Bool
+    /// Count down the last 5 s before a mid-roll ("Ad in 5"), when ads play.
+    /// Missing (configs saved before it): on.
+    public var adCountdown: Bool
     public var autoHideControls: Bool
 
     public init(
@@ -113,6 +116,7 @@ public struct PlayerFeatures: Sendable, Hashable {
         captions: Bool = true,
         pip: Bool = true,
         ads: Bool = false,
+        adCountdown: Bool = true,
         autoHideControls: Bool = true
     ) {
         self.controls = controls
@@ -125,6 +129,7 @@ public struct PlayerFeatures: Sendable, Hashable {
         self.captions = captions
         self.pip = pip
         self.ads = ads
+        self.adCountdown = adCountdown
         self.autoHideControls = autoHideControls
     }
 
@@ -145,6 +150,7 @@ public struct PlayerFeatures: Sendable, Hashable {
             captions: patch.captions ?? captions,
             pip: patch.pip ?? pip,
             ads: patch.ads ?? ads,
+            adCountdown: patch.adCountdown ?? adCountdown,
             autoHideControls: patch.autoHideControls ?? autoHideControls
         )
     }
@@ -161,6 +167,7 @@ public struct PlayerFeatures: Sendable, Hashable {
             "captions": .bool(captions),
             "pip": .bool(pip),
             "ads": .bool(ads),
+            "adCountdown": .bool(adCountdown),
             "autoHideControls": .bool(autoHideControls),
         ]
     }
@@ -178,6 +185,7 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
     public var captions: Bool?
     public var pip: Bool?
     public var ads: Bool?
+    public var adCountdown: Bool?
     public var autoHideControls: Bool?
 
     public init(
@@ -191,6 +199,7 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
         captions: Bool? = nil,
         pip: Bool? = nil,
         ads: Bool? = nil,
+        adCountdown: Bool? = nil,
         autoHideControls: Bool? = nil
     ) {
         self.controls = controls
@@ -203,6 +212,7 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
         self.captions = captions
         self.pip = pip
         self.ads = ads
+        self.adCountdown = adCountdown
         self.autoHideControls = autoHideControls
     }
 
@@ -218,6 +228,7 @@ public struct PlayerFeaturesOverride: Sendable, Hashable {
             captions: json["captions"]?.boolValue,
             pip: json["pip"]?.boolValue,
             ads: json["ads"]?.boolValue,
+            adCountdown: json["adCountdown"]?.boolValue,
             autoHideControls: json["autoHideControls"]?.boolValue
         )
     }
@@ -259,16 +270,32 @@ public struct PlayerCastConfig: Sendable, Hashable {
 /// `features.ads` is on (see `PlayerConfig.adTagToPlay`).
 public struct PlayerAdsConfig: Sendable, Hashable {
     public var adTagURL: String
+    /// How many seconds before a mid-roll the countdown starts, as the
+    /// config has it (`ads.countdownSeconds`, 1–30); nil when missing or not
+    /// a number. `countdownLength` is the value the player uses.
+    public var countdownSeconds: Double?
 
-    public init(adTagURL: String = "") {
+    public init(adTagURL: String = "", countdownSeconds: Double? = nil) {
         self.adTagURL = adTagURL
+        self.countdownSeconds = countdownSeconds
     }
 
     public init(json: [String: JSONValue]) {
-        self.init(adTagURL: json["adTagUrl"]?.stringValue ?? "")
+        self.init(adTagURL: json["adTagUrl"]?.stringValue ?? "", countdownSeconds: json["countdownSeconds"]?.numberValue)
     }
 
-    public var json: JSONValue { ["adTagUrl": .string(adTagURL)] }
+    /// The countdown's length in whole seconds: `countdownSeconds` rounded
+    /// and clamped to 1…30, or 5 when it is missing or not a number.
+    public var countdownLength: Int { AdCountdown.length(countdownSeconds) }
+
+    public var json: JSONValue {
+        var out: [String: JSONValue] = ["adTagUrl": .string(adTagURL)]
+        if let countdownSeconds, countdownSeconds.isFinite {
+            out["countdownSeconds"] = countdownSeconds == countdownSeconds.rounded()
+                ? .int(Int(countdownSeconds)) : .double(countdownSeconds)
+        }
+        return .object(out)
+    }
 }
 
 /// Extra DRM access-token parameters, e.g. `["storefront_id": "…"]`. The

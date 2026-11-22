@@ -225,6 +225,97 @@ final class AdSchedulerTests {
         #expect(driver.calls == ["pause", "request", "discard", "resume"])
     }
 
+    // MARK: Countdown before a mid-roll
+
+    @Test("markers: counts down to the next unplayed mid-roll, never the pre-roll, hidden during the break")
+    func countdownMarkers() async {
+        let scheduler = await make(markers: [AdBreak(id: "pre", start: .zero), AdBreak(id: "a", start: .seconds(8))])
+        let task = await startBeforeContent(scheduler)
+        #expect(scheduler.countdown(at: .zero) == nil)
+        scheduler.adsLoaded(cuePoints: [])
+        scheduler.contentPauseRequested()
+        scheduler.contentResumeRequested()
+        await task.value
+
+        #expect(scheduler.countdown(at: .milliseconds(2900)) == nil)
+        #expect(scheduler.countdown(at: .seconds(3)) == 5)
+        #expect(scheduler.countdown(at: .milliseconds(7600)) == 1)
+        scheduler.contentPosition(.milliseconds(7600))
+        scheduler.contentPosition(.milliseconds(8100))
+        #expect(scheduler.inBreak)
+        #expect(scheduler.countdown(at: .milliseconds(7600)) == nil)
+        scheduler.adsLoaded(cuePoints: [])
+        scheduler.contentPauseRequested()
+        scheduler.contentResumeRequested()
+        // Played: rewinding does not bring its countdown back.
+        scheduler.contentSeeked(to: .seconds(5))
+        #expect(scheduler.countdown(at: .seconds(5)) == nil)
+    }
+
+    @Test("markers: seeking past a break hides the countdown, and it shows again when approached later")
+    func countdownSeekPast() async {
+        let scheduler = await make(markers: [AdBreak(id: "a", start: .seconds(30))])
+        await scheduler.beforeContent()
+        scheduler.contentPosition(.seconds(26))
+        #expect(scheduler.countdown(at: .seconds(26)) == 4)
+        scheduler.contentSeeked(to: .seconds(40))
+        scheduler.contentPosition(.seconds(40))
+        #expect(scheduler.countdown(at: .seconds(40)) == nil)
+        scheduler.contentSeeked(to: .seconds(20))
+        scheduler.contentPosition(.seconds(20))
+        #expect(scheduler.countdown(at: .seconds(20)) == nil)
+        #expect(scheduler.countdown(at: .seconds(25)) == 5)
+        #expect(scheduler.countdown(at: .seconds(20), length: 10) == 10)
+        #expect(scheduler.countdown(at: .seconds(26), length: 3) == nil)
+        #expect(driver.calls.isEmpty)
+    }
+
+    @Test("a VMAP without markers: counts down to its mid-roll cue points, not again after a rewind")
+    func countdownCuePoints() async {
+        let scheduler = await make(markers: [])
+        let task = await startBeforeContent(scheduler)
+        scheduler.adsLoaded(cuePoints: [.zero, .seconds(15), .seconds(-1)])
+        scheduler.contentPauseRequested()
+        scheduler.contentResumeRequested()
+        await task.value
+
+        scheduler.contentPosition(.seconds(10))
+        #expect(scheduler.countdown(at: .seconds(10)) == 5)
+        scheduler.contentPosition(.milliseconds(14600))
+        #expect(scheduler.countdown(at: .milliseconds(14600)) == 1)
+        // IMA's own mid-roll.
+        scheduler.contentPauseRequested()
+        #expect(scheduler.countdown(at: .milliseconds(14600)) == nil)
+        scheduler.contentResumeRequested()
+        scheduler.contentPosition(.milliseconds(15100))
+        scheduler.contentSeeked(to: .seconds(11))
+        scheduler.contentPosition(.seconds(11))
+        #expect(scheduler.countdown(at: .seconds(11)) == nil)
+    }
+
+    @Test("a VAST without markers has no cue points: no countdown")
+    func countdownVAST() async {
+        let scheduler = await make(markers: [])
+        let task = await startBeforeContent(scheduler)
+        scheduler.adsLoaded(cuePoints: [])
+        scheduler.contentPauseRequested()
+        scheduler.allAdsCompleted()
+        await task.value
+        #expect(scheduler.countdown(at: .seconds(10)) == nil)
+    }
+
+    @Test("no countdown while suppressed (AirPlay) or once disposed")
+    func countdownSuppressed() async {
+        var external = true
+        let scheduler = await make(markers: [AdBreak(id: "a", start: .seconds(8))]) { external }
+        await scheduler.beforeContent()
+        #expect(scheduler.countdown(at: .seconds(5)) == nil)
+        external = false
+        #expect(scheduler.countdown(at: .seconds(5)) == 3)
+        scheduler.dispose()
+        #expect(scheduler.countdown(at: .seconds(5)) == nil)
+    }
+
     // MARK: Suppressed, and the impression
 
     @Test("no ads while suppressed (AirPlay)")

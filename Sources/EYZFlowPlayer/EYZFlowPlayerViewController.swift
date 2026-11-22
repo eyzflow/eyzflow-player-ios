@@ -50,6 +50,8 @@ public final class EYZFlowPlayerViewController: UIViewController {
     private let adView = UIView()
     private let adSpinner = UIActivityIndicatorView(style: .large)
     private var inAdBreak = false
+    /// "Ad in 5" … "Ad in 1" before a mid-roll, in a corner over the player.
+    private let adCountdownView = AdCountdownView()
     #endif
 
     public init(options: EYZFlowPlayerOptions) {
@@ -402,12 +404,33 @@ extension EYZFlowPlayerViewController {
             } else {
                 controller.view.bringSubviewToFront(adView)
             }
+            addAdCountdownView(to: controller)
             playback.adContainerAppeared()
         #endif
     }
 }
 
 #if canImport(GoogleInteractiveMediaAds)
+extension EYZFlowPlayerViewController {
+    /// The countdown, over the ad view, above AVKit's bottom bar. It takes
+    /// no touches.
+    private func addAdCountdownView(to controller: AVPlayerViewController) {
+        if adCountdownView.superview !== controller.view {
+            adCountdownView.removeFromSuperview()
+            adCountdownView.translatesAutoresizingMaskIntoConstraints = false
+            controller.view.addSubview(adCountdownView)
+            let guide = controller.view.safeAreaLayoutGuide
+            NSLayoutConstraint.activate([
+                adCountdownView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
+                adCountdownView.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -72),
+            ])
+        } else {
+            controller.view.bringSubviewToFront(adCountdownView)
+        }
+        adCountdownView.show(playback.adCountdown)
+    }
+}
+
 extension EYZFlowPlayerViewController: AdContainerHost {
     var adContainer: (view: UIView, viewController: UIViewController)? {
         guard let playerController, adView.superview === playerController.view, adView.window != nil else { return nil }
@@ -428,6 +451,62 @@ extension EYZFlowPlayerViewController: AdContainerHost {
             adSpinner.stopAnimating()
         }
         castButton.isHidden = (cast?.devices.isEmpty ?? true) || (cast?.isCasting ?? false) || inBreak
+    }
+
+    func adCountdownChanged(_ seconds: Int?) {
+        adCountdownView.show(seconds)
+    }
+}
+
+/// The notice before a mid-roll: a small rounded label. Not interactive:
+/// touches go through to the player, and VoiceOver reads it as text.
+final class AdCountdownView: UIView {
+    private let label = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        isHidden = true
+        backgroundColor = UIColor(white: 0, alpha: 0.72)
+        layer.cornerRadius = 6
+        layer.cornerCurve = .continuous
+        label.textColor = .white
+        let base = UIFont.preferredFont(forTextStyle: .footnote)
+        label.font = UIFontMetrics(forTextStyle: .footnote)
+            .scaledFont(for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: .medium))
+        label.adjustsFontForContentSizeCategory = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+        ])
+        isAccessibilityElement = true
+        accessibilityTraits = [.staticText, .updatesFrequently]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    /// Seconds (5 … 1) to show, or nil to hide.
+    func show(_ seconds: Int?) {
+        guard let seconds else {
+            isHidden = true
+            return
+        }
+        let text = AdCountdown.label(seconds)
+        let appearing = isHidden
+        label.text = text
+        accessibilityLabel = text
+        isHidden = false
+        // Spoken once when it appears, not every second.
+        if appearing, UIAccessibility.isVoiceOverRunning {
+            UIAccessibility.post(notification: .announcement, argument: text)
+        }
     }
 }
 #endif

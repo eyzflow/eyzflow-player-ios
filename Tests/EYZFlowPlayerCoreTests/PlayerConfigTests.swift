@@ -25,6 +25,7 @@ private let remoteJSON: JSONValue = [
         "captions": false,
         "pip": false,
         "ads": false,
+        "adCountdown": true,
         "autoHideControls": false,
     ],
     "cast": [
@@ -32,7 +33,7 @@ private let remoteJSON: JSONValue = [
         "androidReceiverCompatible": false,
         "autoJoinPolicy": "origin_scoped",
     ],
-    "ads": ["adTagUrl": ""],
+    "ads": ["adTagUrl": "", "countdownSeconds": 5],
 ]
 
 private let remoteObject = remoteJSON.objectValue!
@@ -68,6 +69,67 @@ struct PlayerConfigJSONTests {
         #expect(config.features == PlayerFeatures(captions: false))
         #expect(config.cast == nil)
         #expect(config.castReceiverAppID == nil)
+    }
+
+    @Test("adCountdown: missing (older configs) is on, false is off")
+    func adCountdown() {
+        // Saved before adCountdown existed.
+        var missing = remoteObject
+        missing["features"] = ["ads": true, "loop": true]
+        #expect(PlayerConfig(json: missing).features.adCountdown)
+        #expect(PlayerConfig(json: [:]).features.adCountdown)
+        var off = remoteObject
+        off["features"] = ["ads": true, "adCountdown": false]
+        #expect(!PlayerConfig(json: off).features.adCountdown)
+        var on = remoteObject
+        on["features"] = ["adCountdown": true]
+        #expect(PlayerConfig(json: on).features.adCountdown)
+        var mistyped = remoteObject
+        mistyped["features"] = ["adCountdown": "no"]
+        #expect(PlayerConfig(json: mistyped).features.adCountdown)
+        #expect(PlayerConfig.defaults.features.adCountdown)
+        #expect(PlayerConfig.defaults.features.json.objectValue?["adCountdown"] == .bool(true))
+    }
+
+    @Test("ads.countdownSeconds: 1–30, rounded and clamped; 5 when missing or not a number")
+    func countdownSeconds() {
+        func length(_ value: JSONValue?) -> Int? {
+            var ads: [String: JSONValue] = ["adTagUrl": "https://ads/tag"]
+            if let value { ads["countdownSeconds"] = value }
+            var json = remoteObject
+            json["ads"] = .object(ads)
+            return PlayerConfig(json: json).ads?.countdownLength
+        }
+        #expect(PlayerConfig(json: remoteObject).ads?.countdownLength == 5)
+        #expect(length(nil) == 5)
+        #expect(length(.string("8")) == 5)
+        #expect(length(.null) == 5)
+        #expect(length(.int(10)) == 10)
+        #expect(length(.int(3)) == 3)
+        #expect(length(.int(0)) == 1)
+        #expect(length(.int(-4)) == 1)
+        #expect(length(.int(90)) == 30)
+        #expect(length(.double(7.4)) == 7)
+        #expect(length(.double(7.5)) == 8)
+        #expect(PlayerAdsConfig().countdownLength == 5)
+        #expect(PlayerAdsConfig(countdownSeconds: .nan).countdownLength == 5)
+    }
+
+    @Test("an inline ads config carries its own countdownSeconds")
+    func countdownSecondsOverride() {
+        let remote = PlayerConfig(json: remoteObject)
+        let merged = mergePlayerConfig(remote, PlayerConfigOverride(ads: PlayerAdsConfig(adTagURL: "https://ads/tag", countdownSeconds: 12)))
+        #expect(merged.ads?.countdownLength == 12)
+        #expect(merged.ads?.json.objectValue?["countdownSeconds"] == .int(12))
+    }
+
+    @Test("an inline adCountdown wins over the remote config's")
+    func adCountdownOverride() {
+        var json = remoteObject
+        json["features"] = ["adCountdown": true]
+        let remote = PlayerConfig(json: json)
+        #expect(!mergePlayerConfig(remote, PlayerConfigOverride(features: PlayerFeaturesOverride(adCountdown: false))).features.adCountdown)
+        #expect(mergePlayerConfig(remote, PlayerConfigOverride(features: PlayerFeaturesOverride(loop: true))).features.adCountdown)
     }
 
     @Test("an empty receiver id is no receiver")

@@ -14,6 +14,9 @@ protocol AdContainerHost: AnyObject {
     /// An ad break began or ended, or its ad started: hide or show the
     /// player's controls.
     func adStateChanged(inBreak: Bool, adPlaying: Bool)
+    /// The countdown before a mid-roll changed: seconds (5 … 1), or nil to
+    /// hide it.
+    func adCountdownChanged(_ seconds: Int?)
 }
 
 /// Plays the ads [`AdBreakScheduler`] asks for through Google IMA.

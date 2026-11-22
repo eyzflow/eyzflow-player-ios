@@ -10,8 +10,8 @@ public struct EYZFlowPlayerOptions: Sendable {
     public var description: String?
     /// Shown while casting and on the TV.
     public var poster: URL?
-    /// A film plays with FairPlay and a playback session; a trailer, or nil,
-    /// plays clear.
+    /// A film plays with FairPlay; a trailer, or nil, plays clear. Either
+    /// opens a playback session with `storefrontID` and `drmAuthorization`.
     public var sourceType: EYZFlowSourceType?
     /// Where to start, in seconds; nil starts at the beginning.
     public var progressSeconds: Double?
@@ -27,9 +27,11 @@ public struct EYZFlowPlayerOptions: Sendable {
     /// inline `config`; e.g. `PlayerConfigOverride(features: .init(ads: true),
     /// ads: PlayerAdsConfig(adTagURL: tag))`.
     public var config: PlayerConfigOverride?
-    /// The viewer's `Authorization` for DRM, e.g. `Bearer <token>`.
+    /// The viewer's `Authorization` for DRM and the playback session, e.g.
+    /// `Bearer <token>`.
     public var drmAuthorization: String?
-    /// Opens a playback session for the stream and device limits.
+    /// Opens a playback session (with `drmAuthorization`, for clear streams
+    /// too) for the stream and device limits and the plan's ads answer.
     public var storefrontID: String?
     /// Extra DRM access-token parameters.
     public var drmParameters: [String: JSONValue]
@@ -120,6 +122,6 @@ public struct EYZFlowPlayerOptions: Sendable {
         )
     }
 
-    /// Whether this plays with DRM and a playback session.
+    /// Whether this plays with DRM.
     public var isProtected: Bool { sourceType?.isProtected ?? false }
 }
