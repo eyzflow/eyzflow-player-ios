@@ -48,7 +48,8 @@ public final class EYZFlowPlayback {
     private var observations: [NSKeyValueObservation] = []
     private var notificationTokens: [any NSObjectProtocol] = []
     private var timeObserver: Any?
-    private var lastTickPosition: Duration = .zero
+    /// Finds seeks in the ticks and time jumps; see `SeekDetector`.
+    private var seeks = SeekDetector()
     private var resumed = false
     private var resumeSeconds: Double?
     private var accessHeader: String?
@@ -374,7 +375,7 @@ public final class EYZFlowPlayback {
         resumeSeconds = seconds
         resumed = false
         groupsRequested = false
-        lastTickPosition = .milliseconds(Int64((seconds ?? 0) * 1000))
+        seeks.reset(to: .milliseconds(Int64((seconds ?? 0) * 1000)))
         let asset = AVURLAsset(url: source.hlsStreamURL)
         if let accessHeader {
             let loader = FairPlayKeyLoader(
@@ -535,42 +536,48 @@ public final class EYZFlowPlayback {
         if let duration = currentDuration?.inSecondsDouble, seconds >= duration - 5 { return }
         let target = CMTime(seconds: seconds, preferredTimescale: 600)
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
-        lastTickPosition = .milliseconds(Int64(seconds * 1000))
+        seeks.reset(to: .milliseconds(Int64(seconds * 1000)))
     }
 
     private func tick() {
         let position = currentPosition
-        // A jump of more than a few seconds between ticks is a seek the
-        // jump notification may have reported already; the tick only moves
-        // the reference.
-        lastTickPosition = position
+        // The time observer also fires on a jump, before the jump
+        // notification: the seek is found here then.
+        let seek = detectSeek(at: position)
         if tracker.isPlaying { recorder?.report(position) }
         sync()
         signals.report(position)
         if isAtEnd, let duration = currentDuration, position < duration - .seconds(1) { isAtEnd = false }
         updateEndScreen()
         #if canImport(GoogleInteractiveMediaAds)
-            adSeeking = false
+            if seek == nil { adSeeking = false }
             adScheduler?.contentPosition(position)
             updateAdCountdown()
         #endif
     }
 
     private func timeJumped() {
-        let from = lastTickPosition
-        let to = currentPosition
-        lastTickPosition = to
-        signals.report(to)
-        if isAtEnd, let duration = currentDuration, to < duration - .seconds(1) { isAtEnd = false }
+        let position = currentPosition
+        detectSeek(at: position)
+        signals.report(position)
+        if isAtEnd, let duration = currentDuration, position < duration - .seconds(1) { isAtEnd = false }
         updateEndScreen()
+    }
+
+    /// Reports the seek that got the playhead to `position`, if it was one.
+    @discardableResult
+    private func detectSeek(at position: Duration) -> Seek? {
+        guard let seek = seeks.observe(position: position, rate: Double(player?.rate ?? 0)) else { return nil }
         #if canImport(GoogleInteractiveMediaAds)
-            adScheduler?.contentSeeked(to: to)
+            // Before the position reaches the ads: a break seeked over is
+            // not one played through.
+            adScheduler?.contentSeeked(to: seek.to)
             adSeeking = true
             updateAdCountdown()
         #endif
-        guard abs((to - from).inSecondsDouble) >= 1 else { return }
-        tracker.seeked(from: from, to: to, duration: currentDuration)
-        if tracker.hasStarted { recorder?.checkpoint(to) }
+        tracker.seeked(from: seek.from, to: seek.to, duration: currentDuration)
+        if tracker.hasStarted { recorder?.checkpoint(seek.to) }
+        return seek
     }
 
     private var audioGroup: AVMediaSelectionGroup?

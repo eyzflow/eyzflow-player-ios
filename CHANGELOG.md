@@ -31,6 +31,11 @@
   player at a signal or after the end, with skip, seek, play, pause and
   dismiss. `EYZFlowPlayback.endScreenPhase`, `onEndScreenChange`,
   `isAtEnd`, `seek(to:)`, `play()`, `pause()`.
+- `PlaybackSeeked` is reported again, once per seek, with where it started
+  and where it landed: for AVKit's controls, scrubbing and `player.seek`, also
+  while paused. AVPlayer's time observer fires on a jump before the jump
+  notification, so the seek measured 0 s and was dropped. A mid-roll seeked
+  over is no longer counted as passed (EYF-217).
 
 ## 0.3.0
 
