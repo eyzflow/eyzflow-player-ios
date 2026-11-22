@@ -201,6 +201,10 @@ fetch as the ad markers, with or without ads.
 - Text in en, de, fr or nl by the device language, English otherwise.
 - `features.skipButtons: false` in the config hides the button; missing
   means on. The events still come.
+- `skipButtonTypes` picks the types with a button (`intro`, `recap`,
+  `openingCredits`, `closingCredits`): by default all but the closing
+  credits, where skipping only ends the film. Types left out keep their
+  default; an inline `PlayerConfigOverride(skipButtonTypes:)` wins per type.
 - Events: `signalStarted` and `signalEnded`, with the `StreamSignal` (type,
   start, end, label), and `EYZFlowPlayerOptions.onSignal` (the signal, then
   nil), e.g. to offer the next episode when `.closingCredits` starts.

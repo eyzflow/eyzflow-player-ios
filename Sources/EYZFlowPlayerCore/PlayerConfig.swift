@@ -332,6 +332,63 @@ public struct PlayerDRMConfig: Sendable, Hashable {
     public var json: JSONValue { ["parameters": .object(parameters)] }
 }
 
+/// Which signals get a skip button (`features.skipButtons`): the config's
+/// `skipButtonTypes`. A type left out keeps its default: intro, recap and
+/// opening credits on, closing credits off (skipping them only ends the film;
+/// the end screen belongs there).
+public struct PlayerSkipButtonTypes: Sendable, Hashable {
+    public var intro: Bool?
+    public var recap: Bool?
+    public var openingCredits: Bool?
+    public var closingCredits: Bool?
+
+    public init(intro: Bool? = nil, recap: Bool? = nil, openingCredits: Bool? = nil, closingCredits: Bool? = nil) {
+        self.intro = intro
+        self.recap = recap
+        self.openingCredits = openingCredits
+        self.closingCredits = closingCredits
+    }
+
+    public init(json: [String: JSONValue]) {
+        self.init(
+            intro: json["intro"]?.boolValue,
+            recap: json["recap"]?.boolValue,
+            openingCredits: json["openingCredits"]?.boolValue,
+            closingCredits: json["closingCredits"]?.boolValue
+        )
+    }
+
+    /// Whether `type` gets a skip button.
+    public func allows(_ type: StreamSignalType) -> Bool {
+        switch type {
+        case .intro: intro ?? true
+        case .recap: recap ?? true
+        case .openingCredits: openingCredits ?? true
+        case .closingCredits: closingCredits ?? false
+        }
+    }
+
+    /// `patch`'s values over these.
+    public func merged(with patch: PlayerSkipButtonTypes?) -> PlayerSkipButtonTypes {
+        guard let patch else { return self }
+        return PlayerSkipButtonTypes(
+            intro: patch.intro ?? intro,
+            recap: patch.recap ?? recap,
+            openingCredits: patch.openingCredits ?? openingCredits,
+            closingCredits: patch.closingCredits ?? closingCredits
+        )
+    }
+
+    public var json: JSONValue {
+        var out: [String: JSONValue] = [:]
+        if let intro { out["intro"] = .bool(intro) }
+        if let recap { out["recap"] = .bool(recap) }
+        if let openingCredits { out["openingCredits"] = .bool(openingCredits) }
+        if let closingCredits { out["closingCredits"] = .bool(closingCredits) }
+        return .object(out)
+    }
+}
+
 /// A player config: `GET /v1/player-configs/{configId}`, merged with an
 /// inline [`PlayerConfigOverride`] by [`mergePlayerConfig(_:_:)`].
 public struct PlayerConfig: Sendable, Hashable {
@@ -345,6 +402,8 @@ public struct PlayerConfig: Sendable, Hashable {
     public var cast: PlayerCastConfig?
     public var ads: PlayerAdsConfig?
     public var drm: PlayerDRMConfig?
+    /// Which signals get a skip button; nil: the defaults.
+    public var skipButtonTypes: PlayerSkipButtonTypes?
 
     /// The web player's `DEFAULT_CONFIG`, and the backend's defaults.
     public static let defaults = PlayerConfig()
@@ -357,7 +416,8 @@ public struct PlayerConfig: Sendable, Hashable {
         features: PlayerFeatures = PlayerFeatures(),
         cast: PlayerCastConfig? = nil,
         ads: PlayerAdsConfig? = nil,
-        drm: PlayerDRMConfig? = nil
+        drm: PlayerDRMConfig? = nil,
+        skipButtonTypes: PlayerSkipButtonTypes? = nil
     ) {
         self.id = id
         self.name = name
@@ -367,6 +427,7 @@ public struct PlayerConfig: Sendable, Hashable {
         self.cast = cast
         self.ads = ads
         self.drm = drm
+        self.skipButtonTypes = skipButtonTypes
     }
 
     /// The backend's camelCase JSON. Missing or mistyped fields keep the
@@ -381,8 +442,15 @@ public struct PlayerConfig: Sendable, Hashable {
             features: json["features"]?.objectValue.map { PlayerFeatures(json: $0) } ?? defaults.features,
             cast: json["cast"]?.objectValue.map(PlayerCastConfig.init(json:)),
             ads: json["ads"]?.objectValue.map(PlayerAdsConfig.init(json:)),
-            drm: json["drm"]?.objectValue.map(PlayerDRMConfig.init(json:))
+            drm: json["drm"]?.objectValue.map(PlayerDRMConfig.init(json:)),
+            skipButtonTypes: json["skipButtonTypes"]?.objectValue.map(PlayerSkipButtonTypes.init(json:))
         )
+    }
+
+    /// Whether the skip button shows for `type`: the skip buttons on, and that
+    /// type switched on (by default all but the closing credits).
+    public func showsSkipButton(for type: StreamSignalType) -> Bool {
+        features.skipButtons && (skipButtonTypes ?? PlayerSkipButtonTypes()).allows(type)
     }
 
     /// `cast.receiverAppId`, when set.
@@ -402,6 +470,7 @@ public struct PlayerConfig: Sendable, Hashable {
         if let cast { out["cast"] = cast.json }
         if let ads { out["ads"] = ads.json }
         if let drm { out["drm"] = drm.json }
+        if let skipButtonTypes { out["skipButtonTypes"] = skipButtonTypes.json }
         return .object(out)
     }
 
@@ -427,6 +496,8 @@ public struct PlayerConfigOverride: Sendable, Hashable {
     public var ads: PlayerAdsConfig?
     /// Its parameters are merged over the remote ones.
     public var drm: PlayerDRMConfig?
+    /// Merged type by type.
+    public var skipButtonTypes: PlayerSkipButtonTypes?
 
     public init(
         id: String? = nil,
@@ -436,7 +507,8 @@ public struct PlayerConfigOverride: Sendable, Hashable {
         features: PlayerFeaturesOverride? = nil,
         cast: PlayerCastConfig? = nil,
         ads: PlayerAdsConfig? = nil,
-        drm: PlayerDRMConfig? = nil
+        drm: PlayerDRMConfig? = nil,
+        skipButtonTypes: PlayerSkipButtonTypes? = nil
     ) {
         self.id = id
         self.name = name
@@ -446,6 +518,7 @@ public struct PlayerConfigOverride: Sendable, Hashable {
         self.cast = cast
         self.ads = ads
         self.drm = drm
+        self.skipButtonTypes = skipButtonTypes
     }
 }
 
@@ -465,7 +538,9 @@ public func mergePlayerConfig(_ base: PlayerConfig, _ patch: PlayerConfigOverrid
             PlayerDRMConfig(
                 parameters: (base.drm?.parameters ?? [:]).merging(drm.parameters) { _, inline in inline }
             )
-        } ?? base.drm
+        } ?? base.drm,
+        skipButtonTypes: patch.skipButtonTypes.map { (base.skipButtonTypes ?? PlayerSkipButtonTypes()).merged(with: $0) }
+            ?? base.skipButtonTypes
     )
 }
 

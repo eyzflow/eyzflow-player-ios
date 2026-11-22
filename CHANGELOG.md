@@ -9,6 +9,9 @@
   lands at the signal's end, never before it. `features.skipButtons: false`
   hides it. The iPhone and iPad button takes the config's theme. Text in en,
   de, fr and nl.
+- `skipButtonTypes` (EYF-223): the skip button per signal type, from the
+  player config or inline. By default intro, recap and opening credits; no
+  "Skip credits" over the closing credits unless `closingCredits: true`.
 - New `PlaybackEvent` cases `signalStarted` and `signalEnded`, and
   `EYZFlowPlayerOptions.onSignal`, for offering the next episode at the
   closing credits. An exhaustive `switch` over `PlaybackEvent` needs the two

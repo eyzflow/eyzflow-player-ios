@@ -245,7 +245,7 @@ public final class EYZFlowPlayerViewController: UIViewController {
     /// Offers to skip the signal playback is in: while there is one, the
     /// config's `features.skipButtons` is on, and no ad break is under way.
     private func renderSkip() {
-        var signal = playback.config.features.skipButtons ? playback.activeSignal : nil
+        var signal = playback.activeSignal.flatMap { playback.config.showsSkipButton(for: $0.type) ? $0 : nil }
         #if canImport(GoogleInteractiveMediaAds)
             if inAdBreak { signal = nil }
         #endif

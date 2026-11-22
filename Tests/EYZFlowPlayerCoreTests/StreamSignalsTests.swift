@@ -212,3 +212,34 @@ struct ThemeValueTests {
         #expect(cssLength("1em") == nil)
     }
 }
+
+@Suite("Skip button types")
+struct SkipButtonTypesTests {
+    @Test("all but the closing credits by default; the config switches types")
+    func defaults() {
+        let config = PlayerConfig.defaults
+        #expect(config.showsSkipButton(for: .intro))
+        #expect(config.showsSkipButton(for: .recap))
+        #expect(config.showsSkipButton(for: .openingCredits))
+        #expect(!config.showsSkipButton(for: .closingCredits))
+
+        let remote = PlayerConfig(json: [
+            "features": ["skipButtons": .bool(true)],
+            "skipButtonTypes": ["recap": .bool(false), "closingCredits": .bool(true)],
+        ])
+        #expect(!remote.showsSkipButton(for: .recap))
+        #expect(remote.showsSkipButton(for: .closingCredits))
+        #expect(remote.showsSkipButton(for: .intro))
+
+        let off = PlayerConfig(json: ["features": ["skipButtons": .bool(false)]])
+        #expect(!off.showsSkipButton(for: .intro))
+    }
+
+    @Test("an inline config overrides type by type")
+    func merge() {
+        let remote = PlayerConfig(skipButtonTypes: PlayerSkipButtonTypes(recap: false))
+        let merged = remote.merged(with: PlayerConfigOverride(skipButtonTypes: PlayerSkipButtonTypes(closingCredits: true)))
+        #expect(!merged.showsSkipButton(for: .recap))
+        #expect(merged.showsSkipButton(for: .closingCredits))
+    }
+}
