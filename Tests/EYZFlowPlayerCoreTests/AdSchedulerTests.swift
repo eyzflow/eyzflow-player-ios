@@ -306,11 +306,11 @@ final class AdSchedulerTests {
 
     @Test("no countdown while suppressed (AirPlay) or once disposed")
     func countdownSuppressed() async {
-        var external = true
-        let scheduler = await make(markers: [AdBreak(id: "a", start: .seconds(8))]) { external }
+        let external = Box(true)
+        let scheduler = await make(markers: [AdBreak(id: "a", start: .seconds(8))]) { external.value }
         await scheduler.beforeContent()
         #expect(scheduler.countdown(at: .seconds(5)) == nil)
-        external = false
+        external.value = false
         #expect(scheduler.countdown(at: .seconds(5)) == 3)
         scheduler.dispose()
         #expect(scheduler.countdown(at: .seconds(5)) == nil)

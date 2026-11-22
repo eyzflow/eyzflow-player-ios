@@ -266,7 +266,7 @@ public struct PlayerCastConfig: Sendable, Hashable {
     }
 }
 
-/// The config's ads: a VAST or VMAP tag, played on iPhone and iPad when
+/// The config's ads: a VAST or VMAP tag, played on iPhone, iPad and Apple TV when
 /// `features.ads` is on (see `PlayerConfig.adTagToPlay`).
 public struct PlayerAdsConfig: Sendable, Hashable {
     public var adTagURL: String

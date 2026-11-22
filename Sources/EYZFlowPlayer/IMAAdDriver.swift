@@ -1,4 +1,4 @@
-#if os(iOS) && canImport(GoogleInteractiveMediaAds)
+#if (os(iOS) || os(tvOS)) && canImport(GoogleInteractiveMediaAds)
 import AVFoundation
 import EYZFlowPlayerCore
 import GoogleInteractiveMediaAds
@@ -17,6 +17,11 @@ protocol AdContainerHost: AnyObject {
     /// The countdown before a mid-roll changed: seconds (5 … 1), or nil to
     /// hide it.
     func adCountdownChanged(_ seconds: Int?)
+    #if os(tvOS)
+    /// IMA's focus environment changed (a skip button appeared, or the ad
+    /// ended): focus moves there.
+    func adFocusChanged(_ environment: (any UIFocusEnvironment)?)
+    #endif
 }
 
 /// Plays the ads [`AdBreakScheduler`] asks for through Google IMA.
@@ -40,6 +45,10 @@ final class IMAAdDriver: NSObject, AdDriver {
     private var playhead: IMAAVPlayerContentPlayhead?
     private var generation = 0
     private var requestPending = false
+    #if os(tvOS)
+    private var adPaused = false
+    private weak var lastFocus: AnyObject?
+    #endif
 
     init(adTagURL: String, player: AVPlayer, host: any AdContainerHost) {
         self.adTagURL = adTagURL
@@ -68,7 +77,9 @@ final class IMAAdDriver: NSObject, AdDriver {
         guard requestPending, let player,
               let (view, viewController) = host?.adContainer, view.window != nil else { return }
         requestPending = false
-        let container = IMAAdDisplayContainer(adContainer: view, viewController: viewController, companionSlots: nil)
+        // Not the `companionSlots:` initializer: its parameter type, IMACompanionAdSlot, is missing from the tvOS
+        // framework's binary, so a tvOS app using it fails to link.
+        let container = IMAAdDisplayContainer(adContainer: view, viewController: viewController)
         self.container = container
         let playhead = IMAAVPlayerContentPlayhead(avPlayer: player)
         self.playhead = playhead
@@ -94,7 +105,32 @@ final class IMAAdDriver: NSObject, AdDriver {
         manager = nil
         container = nil
         playhead = nil
+        #if os(tvOS)
+            adPaused = false
+            reportFocus()
+        #endif
     }
+
+    #if os(tvOS)
+    /// Play/Pause on the Siri Remote during an ad.
+    func togglePause() {
+        guard let manager else { return }
+        if adPaused {
+            manager.resume()
+        } else {
+            manager.pause()
+        }
+    }
+
+    /// Passes IMA's focus environment on when it changed. IMA has no event
+    /// for it, so it is checked on every event and progress report.
+    private func reportFocus() {
+        let environment = container?.focusEnvironment
+        guard (environment as AnyObject?) !== lastFocus else { return }
+        lastFocus = environment
+        host?.adFocusChanged(environment)
+    }
+    #endif
 
     func contentComplete() {
         loader.contentComplete()
@@ -138,12 +174,29 @@ final class IMAAdDriver: NSObject, AdDriver {
     fileprivate func event(_ event: IMAAdEvent, from manager: IMAAdsManager) {
         guard manager === self.manager else { return }
         if event.type != .AD_PERIOD_STARTED, event.type != .LOG { log("ad event \(event.typeString)") }
+        #if os(tvOS)
+            switch event.type {
+            case .PAUSE: adPaused = true
+            case .RESUME, .STARTED: adPaused = false
+            default: break
+            }
+        #endif
         switch event.type {
         case .ALL_ADS_COMPLETED:
             scheduler?.allAdsCompleted()
         default:
             break
         }
+        #if os(tvOS)
+            reportFocus()
+        #endif
+    }
+
+    fileprivate func progressed(_ manager: IMAAdsManager) {
+        #if os(tvOS)
+            guard manager === self.manager else { return }
+            reportFocus()
+        #endif
     }
 
     fileprivate func error(_ error: IMAAdError, from manager: IMAAdsManager) {
@@ -155,11 +208,17 @@ final class IMAAdDriver: NSObject, AdDriver {
     fileprivate func pauseRequested(by manager: IMAAdsManager) {
         guard manager === self.manager else { return }
         scheduler?.contentPauseRequested()
+        #if os(tvOS)
+            reportFocus()
+        #endif
     }
 
     fileprivate func resumeRequested(by manager: IMAAdsManager) {
         guard manager === self.manager else { return }
         scheduler?.contentResumeRequested()
+        #if os(tvOS)
+            reportFocus()
+        #endif
     }
 
     private func log(_ message: String) {
@@ -195,6 +254,11 @@ extension IMAAdDriver: IMAAdsManagerDelegate {
     nonisolated func adsManagerDidRequestContentPause(_ adsManager: IMAAdsManager) {
         let manager = Unchecked(adsManager)
         MainActor.assumeIsolated { pauseRequested(by: manager.value) }
+    }
+
+    nonisolated func adsManager(_ adsManager: IMAAdsManager, adDidProgressToTime mediaTime: TimeInterval, totalTime: TimeInterval) {
+        let manager = Unchecked(adsManager)
+        MainActor.assumeIsolated { progressed(manager.value) }
     }
 
     nonisolated func adsManagerDidRequestContentResume(_ adsManager: IMAAdsManager) {
