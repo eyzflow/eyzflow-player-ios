@@ -30,7 +30,11 @@ public final class EYZFlowPlayback {
     /// The player, once the stream is mounted.
     public private(set) var player: AVPlayer?
     public private(set) var state: State = .loading {
-        didSet { if state != oldValue { onStateChange?(state) } }
+        didSet {
+            guard state != oldValue else { return }
+            onStateChange?(state)
+            updateEndScreen()
+        }
     }
 
     /// Called on every state change.
@@ -65,6 +69,22 @@ public final class EYZFlowPlayback {
     /// Called when playback enters or leaves a signal. The player screen
     /// shows the skip button itself.
     public var onSignalChange: (@MainActor (StreamSignal?) -> Void)?
+
+    /// The end screen as this playback shows it: `options.endScreen` over the
+    /// config, once `start()` read it.
+    public private(set) var endScreenSettings = EndScreenSettings.resolve(config: .defaults, hasContent: false)
+
+    /// When the end screen shows now: over the closing credits (or the last
+    /// `secondsBeforeEnd` of a stream without them), after the end, or nil.
+    /// Never during an ad break.
+    public private(set) var endScreenPhase: EndScreenPhase?
+
+    /// Called when `endScreenPhase` changes. The player screen shows the end
+    /// screen itself.
+    public var onEndScreenChange: (@MainActor (EndScreenPhase?) -> Void)?
+
+    /// The film played to its end (until playback moves back from it).
+    public private(set) var isAtEnd = false
 
     #if canImport(GoogleInteractiveMediaAds)
     /// Shows the ads; without one (an app with its own player UI) no ads
@@ -164,6 +184,7 @@ public final class EYZFlowPlayback {
             let found = await markers.value
             guard let self, self.markers == markers else { return }
             self.signals.signals = found.signals
+            self.updateEndScreen()
         }
         async let playerConfig = Self.playerConfig(for: options)
         #if canImport(GoogleInteractiveMediaAds)
@@ -172,6 +193,7 @@ public final class EYZFlowPlayback {
             await coordinator.start()
             let config = await playerConfig
             self.config = config
+            resolveEndScreen()
             showsAdCountdown = config.features.adCountdown
             adCountdownLength = config.ads?.countdownLength ?? AdCountdown.defaultLength
             setUpAds(adTag: adTagForPlayback(
@@ -182,6 +204,7 @@ public final class EYZFlowPlayback {
         #else
             await coordinator.start()
             config = await playerConfig
+            resolveEndScreen()
         #endif
         guard state == .loading else { return }
         switch coordinator.status {
@@ -205,6 +228,55 @@ public final class EYZFlowPlayback {
             config = remote
         }
         return config.merged(with: options.config)
+    }
+
+    private func resolveEndScreen() {
+        let endScreen = options.endScreen
+        endScreenSettings = EndScreenSettings.resolve(
+            config: config,
+            hasContent: endScreen?.hasContent ?? false,
+            enabled: endScreen?.enabled ?? true,
+            app: endScreen?.settings ?? PlayerEndScreenConfig()
+        )
+        updateEndScreen()
+    }
+
+    /// Works out `endScreenPhase` and passes on a change.
+    private func updateEndScreen() {
+        var phase: EndScreenPhase?
+        if state == .playing, player != nil {
+            phase = EYZFlowPlayerCore.endScreenPhase(
+                endScreenSettings,
+                signal: signals.current,
+                position: currentPosition,
+                duration: currentDuration,
+                ended: isAtEnd,
+                hasClosingCredits: signals.signals.contains { $0.type == .closingCredits }
+            )
+            #if canImport(GoogleInteractiveMediaAds)
+                if adScheduler?.inBreak == true { phase = nil }
+            #endif
+        }
+        guard phase != endScreenPhase else { return }
+        endScreenPhase = phase
+        onEndScreenChange?(phase)
+    }
+
+    /// Moves playback to `position` (an app overlay's `seek`).
+    public func seek(to position: Duration) {
+        player?.seek(
+            to: CMTime(value: CMTimeValue(position.inMilliseconds), timescale: 1000),
+            toleranceBefore: .zero,
+            toleranceAfter: .positiveInfinity
+        )
+    }
+
+    public func play() {
+        player?.play()
+    }
+
+    public func pause() {
+        player?.pause()
     }
 
     /// Jumps to the end of the signal playback is in (the end of the content
@@ -475,6 +547,8 @@ public final class EYZFlowPlayback {
         if tracker.isPlaying { recorder?.report(position) }
         sync()
         signals.report(position)
+        if isAtEnd, let duration = currentDuration, position < duration - .seconds(1) { isAtEnd = false }
+        updateEndScreen()
         #if canImport(GoogleInteractiveMediaAds)
             adSeeking = false
             adScheduler?.contentPosition(position)
@@ -487,6 +561,8 @@ public final class EYZFlowPlayback {
         let to = currentPosition
         lastTickPosition = to
         signals.report(to)
+        if isAtEnd, let duration = currentDuration, to < duration - .seconds(1) { isAtEnd = false }
+        updateEndScreen()
         #if canImport(GoogleInteractiveMediaAds)
             adScheduler?.contentSeeked(to: to)
             adSeeking = true
@@ -542,6 +618,8 @@ public final class EYZFlowPlayback {
 
     private func reachedEnd() {
         signals.report(nil)
+        isAtEnd = true
+        updateEndScreen()
         tracker.reachedEnd(position: currentPosition, duration: currentDuration)
         recorder?.finish()
         #if canImport(GoogleInteractiveMediaAds)
@@ -593,6 +671,7 @@ public final class EYZFlowPlayback {
         signals.report(nil)
         player?.replaceCurrentItem(with: nil)
         player = nil
+        updateEndScreen()
         item = nil
         keyLoader?.onError = nil
         keyLoader = nil
@@ -636,6 +715,7 @@ extension EYZFlowPlayback {
             guard let self, let scheduler, scheduler === self.adScheduler else { return }
             self.adHost?.adStateChanged(inBreak: scheduler.inBreak, adPlaying: scheduler.adPlaying)
             self.updateAdCountdown()
+            self.updateEndScreen()
         }
         adDriver = driver
         adScheduler = scheduler

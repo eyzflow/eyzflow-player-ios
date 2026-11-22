@@ -28,6 +28,7 @@ private let remoteJSON: JSONValue = [
         "adCountdown": true,
         "autoHideControls": false,
         "skipButtons": false,
+        "endScreen": false,
     ],
     "cast": [
         "receiverAppId": "ABCD1234",

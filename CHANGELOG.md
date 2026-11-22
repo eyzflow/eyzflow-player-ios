@@ -18,6 +18,19 @@
   new cases. `EYZFlowPlayback.skipSignal()`, `activeSignal` and `config`.
 - The stream's playlist is read once per playback for its markers even
   without ads (`loadHLSMarkers`; `loadHLSAdBreaks` reads it too).
+- End screen (EYF-224): `EYZFlowPlayerOptions.endScreen` with the app's
+  films (`EndScreenItem`) and a next stream. Over the closing credits (the
+  video in a corner), in the last 20 s of a stream without them, and after
+  the end: "Up next" with a countdown, a row of films, "Back to credits".
+  A pick plays in place with its own key check, session and FairPlay;
+  `onSelect` hears it first and can `preventDefault()`. Remote config:
+  `features.endScreen` and `endScreen` (`autoplaySeconds`, `showAt`,
+  `shrinkVideo`, `secondsBeforeEnd`). Apple TV: Play has the focus, Menu
+  goes back. `EYZFlowPlayerViewController.playback` changes after a pick.
+- `EYZFlowPlayerOptions.overlay`: the app's own view controller over the
+  player at a signal or after the end, with skip, seek, play, pause and
+  dismiss. `EYZFlowPlayback.endScreenPhase`, `onEndScreenChange`,
+  `isAtEnd`, `seek(to:)`, `play()`, `pause()`.
 
 ## 0.3.0
 
