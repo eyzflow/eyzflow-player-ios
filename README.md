@@ -152,7 +152,9 @@ countdown, skip button and click-through over the player.
   off. No ads play on AirPlay or while casting, and when casting hands the
   film back, neither the pre-roll nor a break already played plays again.
 - **Countdown before a mid-roll:** a small corner notice, "Ad in 5" … "Ad
-  in 1", for the last 5 s before each mid-roll (never a pre-roll or
+  in 1", for the last 5 s before each mid-roll (`ads.countdownSeconds` in the
+  config sets the length, 1–30; missing or out of range falls back to 5 or
+  is clamped; `playback.adCountdownLength` changes it while playing) (never a pre-roll or
   post-roll), in en, de, fr or nl by the device language, English otherwise.
   It counts towards the unplayed markers (a marker passed by seeking gets it
   again when approached later), or on a stream without markers towards a

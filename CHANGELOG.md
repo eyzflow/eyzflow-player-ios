@@ -21,6 +21,9 @@
   points on streams without them. `features.adCountdown: false` turns it off
   (missing is on); `EYZFlowPlayback.showsAdCountdown` changes it while
   playing.
+- The countdown's length from the config's `ads.countdownSeconds` (1–30,
+  rounded and clamped; 5 when missing); `EYZFlowPlayback.adCountdownLength`
+  changes it while playing.
 
 ## 0.1.0
 

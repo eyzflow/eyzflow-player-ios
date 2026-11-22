@@ -5,17 +5,31 @@ import Foundation
 ///
 /// The same rules as the web player's `ad-countdown.ts`.
 public enum AdCountdown {
-    /// How long before a mid-roll the notice counts down.
-    public static let window: Duration = .seconds(5)
+    /// How many seconds before a mid-roll the notice counts down, unless the
+    /// config's `ads.countdownSeconds` says otherwise.
+    public static let defaultLength = 5
+    /// The longest countdown a config may ask for.
+    public static let maxLength = 30
 
-    /// The whole seconds left (5 … 1, rounded up) until the nearest break
-    /// start ahead of `position`, or nil when none is within `window`. A
-    /// break at or behind the playhead (reached, or seeked past) is not
-    /// counted towards.
-    public static func seconds(at position: Duration, breakStarts: [Duration]) -> Int? {
+    /// The countdown's length for the config's `ads.countdownSeconds`:
+    /// rounded and clamped to 1…30, or 5 when missing or not a number.
+    public static func length(_ configured: Double?) -> Int {
+        guard let configured, configured.isFinite else { return defaultLength }
+        return Int(min(Double(maxLength), max(1, configured.rounded())))
+    }
+
+    /// The whole seconds left (`length` … 1, rounded up) until the nearest
+    /// break start ahead of `position`, or nil when none is within `length`
+    /// seconds. A break at or behind the playhead (reached, or seeked past)
+    /// is not counted towards.
+    public static func seconds(
+        at position: Duration,
+        breakStarts: [Duration],
+        length: Int = defaultLength
+    ) -> Int? {
         guard let next = breakStarts.filter({ $0 > position }).min() else { return nil }
         let left = next - position
-        guard left > .zero, left <= window else { return nil }
+        guard left > .zero, left <= .seconds(length) else { return nil }
         let millis = left.inMilliseconds
         return max(1, (millis + 999) / 1000)
     }

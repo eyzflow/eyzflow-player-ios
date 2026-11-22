@@ -70,7 +70,19 @@ public final class EYZFlowPlayback {
         didSet { if showsAdCountdown != oldValue { updateAdCountdown() } }
     }
 
-    /// The seconds (5 … 1) until a mid-roll starts while its countdown shows;
+    /// How many seconds before a mid-roll the countdown starts (1…30). Set
+    /// from the config's `ads.countdownSeconds` (missing: 5) when the
+    /// playback starts; the app may change it any time after, without
+    /// reloading the stream. Values outside 1…30 are clamped.
+    public var adCountdownLength = AdCountdown.defaultLength {
+        didSet {
+            // Assigning here does not call didSet again.
+            adCountdownLength = AdCountdown.length(Double(adCountdownLength))
+            if adCountdownLength != oldValue { updateAdCountdown() }
+        }
+    }
+
+    /// The seconds (`adCountdownLength` … 1) until a mid-roll starts while its countdown shows;
     /// otherwise nil. Hidden while paused, seeking, during a break, on AirPlay
     /// or casting, and when the viewer seeks past the break.
     public private(set) var adCountdown: Int?
@@ -123,6 +135,7 @@ public final class EYZFlowPlayback {
             await coordinator.start()
             let config = await adConfig
             showsAdCountdown = config.features.adCountdown
+            adCountdownLength = config.ads?.countdownLength ?? AdCountdown.defaultLength
             setUpAds(adTag: adTagForPlayback(
                 configTag: config.adTagToPlay,
                 planAds: coordinator.planAds,
@@ -577,7 +590,7 @@ extension EYZFlowPlayback {
         var seconds: Int?
         if showsAdCountdown, !adSeeking, state == .playing, let player, let adScheduler,
            player.timeControlStatus != .paused {
-            seconds = adScheduler.countdown(at: currentPosition)
+            seconds = adScheduler.countdown(at: currentPosition, length: adCountdownLength)
         }
         guard seconds != adCountdown else { return }
         adCountdown = seconds

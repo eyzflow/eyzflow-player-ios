@@ -270,16 +270,32 @@ public struct PlayerCastConfig: Sendable, Hashable {
 /// `features.ads` is on (see `PlayerConfig.adTagToPlay`).
 public struct PlayerAdsConfig: Sendable, Hashable {
     public var adTagURL: String
+    /// How many seconds before a mid-roll the countdown starts, as the
+    /// config has it (`ads.countdownSeconds`, 1–30); nil when missing or not
+    /// a number. `countdownLength` is the value the player uses.
+    public var countdownSeconds: Double?
 
-    public init(adTagURL: String = "") {
+    public init(adTagURL: String = "", countdownSeconds: Double? = nil) {
         self.adTagURL = adTagURL
+        self.countdownSeconds = countdownSeconds
     }
 
     public init(json: [String: JSONValue]) {
-        self.init(adTagURL: json["adTagUrl"]?.stringValue ?? "")
+        self.init(adTagURL: json["adTagUrl"]?.stringValue ?? "", countdownSeconds: json["countdownSeconds"]?.numberValue)
     }
 
-    public var json: JSONValue { ["adTagUrl": .string(adTagURL)] }
+    /// The countdown's length in whole seconds: `countdownSeconds` rounded
+    /// and clamped to 1…30, or 5 when it is missing or not a number.
+    public var countdownLength: Int { AdCountdown.length(countdownSeconds) }
+
+    public var json: JSONValue {
+        var out: [String: JSONValue] = ["adTagUrl": .string(adTagURL)]
+        if let countdownSeconds, countdownSeconds.isFinite {
+            out["countdownSeconds"] = countdownSeconds == countdownSeconds.rounded()
+                ? .int(Int(countdownSeconds)) : .double(countdownSeconds)
+        }
+        return .object(out)
+    }
 }
 
 /// Extra DRM access-token parameters, e.g. `["storefront_id": "…"]`. The

@@ -265,6 +265,8 @@ final class AdSchedulerTests {
         scheduler.contentPosition(.seconds(20))
         #expect(scheduler.countdown(at: .seconds(20)) == nil)
         #expect(scheduler.countdown(at: .seconds(25)) == 5)
+        #expect(scheduler.countdown(at: .seconds(20), length: 10) == 10)
+        #expect(scheduler.countdown(at: .seconds(26), length: 3) == nil)
         #expect(driver.calls.isEmpty)
     }
 

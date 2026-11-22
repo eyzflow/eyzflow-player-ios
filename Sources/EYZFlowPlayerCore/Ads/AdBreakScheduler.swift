@@ -146,15 +146,15 @@ public final class AdBreakScheduler {
     public var containerNeeded: Bool { requesting || managerAlive }
 
     /// The countdown before the next mid-roll at `position`: whole seconds
-    /// (5 … 1) or nil for no notice. It counts towards the stream's unplayed
+    /// (`length` … 1) or nil for no notice. It counts towards the stream's unplayed
     /// mid-roll markers, or on a stream without markers a VMAP's mid-roll cue
     /// points not yet played through. Nil during a break, while no ads may
     /// start (AirPlay), and once disposed. The player hides it while paused
     /// or seeking, and when the config turns it off.
-    public func countdown(at position: Duration) -> Int? {
+    public func countdown(at position: Duration, length: Int = AdCountdown.defaultLength) -> Int? {
         guard !disposed, !inBreak, !requesting, !adPlaying, !suppressed() else { return nil }
         let starts = ads.schedule.hasBreaks ? ads.schedule.upcomingMidrollStarts : cueSchedule.upcoming
-        return AdCountdown.seconds(at: position, breakStarts: starts)
+        return AdCountdown.seconds(at: position, breakStarts: starts, length: length)
     }
 
     /// Awaited before the content first plays: a pre-roll, if there is one,

@@ -21,6 +21,37 @@ struct AdCountdownTests {
         #expect(AdCountdown.seconds(at: s(30), breakStarts: starts) == nil)
     }
 
+    @Test("a 10 s countdown counts 10 … 1")
+    func tenSeconds() {
+        let starts = [s(30)]
+        #expect(AdCountdown.seconds(at: s(19.9), breakStarts: starts, length: 10) == nil)
+        #expect(AdCountdown.seconds(at: s(20), breakStarts: starts, length: 10) == 10)
+        #expect(AdCountdown.seconds(at: s(20.5), breakStarts: starts, length: 10) == 10)
+        #expect(AdCountdown.seconds(at: s(25), breakStarts: starts, length: 10) == 5)
+        #expect(AdCountdown.seconds(at: s(29.5), breakStarts: starts, length: 10) == 1)
+        #expect(AdCountdown.seconds(at: s(30), breakStarts: starts, length: 10) == nil)
+    }
+
+    @Test("a 3 s countdown counts 3 … 1")
+    func threeSeconds() {
+        let starts = [s(30)]
+        #expect(AdCountdown.seconds(at: s(26.9), breakStarts: starts, length: 3) == nil)
+        #expect(AdCountdown.seconds(at: s(27), breakStarts: starts, length: 3) == 3)
+        #expect(AdCountdown.seconds(at: s(28.5), breakStarts: starts, length: 3) == 2)
+        #expect(AdCountdown.seconds(at: s(29.9), breakStarts: starts, length: 3) == 1)
+    }
+
+    @Test("the length: rounded, clamped to 1…30, 5 when missing")
+    func length() {
+        #expect(AdCountdown.length(nil) == 5)
+        #expect(AdCountdown.length(.nan) == 5)
+        #expect(AdCountdown.length(.infinity) == 5)
+        #expect(AdCountdown.length(8) == 8)
+        #expect(AdCountdown.length(0) == 1)
+        #expect(AdCountdown.length(90) == 30)
+        #expect(AdCountdown.length(7.4) == 7)
+    }
+
     @Test("uses the nearest break ahead, in any order")
     func nearest() {
         #expect(AdCountdown.seconds(at: s(57), breakStarts: [s(90), s(30), s(60)]) == 3)
