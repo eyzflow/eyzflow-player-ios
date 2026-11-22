@@ -77,7 +77,9 @@ final class IMAAdDriver: NSObject, AdDriver {
         guard requestPending, let player,
               let (view, viewController) = host?.adContainer, view.window != nil else { return }
         requestPending = false
-        let container = IMAAdDisplayContainer(adContainer: view, viewController: viewController, companionSlots: nil)
+        // Not the `companionSlots:` initializer: its parameter type, IMACompanionAdSlot, is missing from the tvOS
+        // framework's binary, so a tvOS app using it fails to link.
+        let container = IMAAdDisplayContainer(adContainer: view, viewController: viewController)
         self.container = container
         let playhead = IMAAVPlayerContentPlayhead(avPlayer: player)
         self.playhead = playhead
