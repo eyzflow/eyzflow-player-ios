@@ -2,6 +2,9 @@
 import AVFoundation
 import EYZFlowPlayerCore
 import Foundation
+#if os(iOS) && canImport(GoogleInteractiveMediaAds)
+import UIKit
+#endif
 
 /// One playback, without UI: the EYZFlow rules (key check, session, access
 /// token, beats) around an `AVPlayer` with FairPlay, its events and the
@@ -46,6 +49,17 @@ public final class EYZFlowPlayback {
     private var resumeSeconds: Double?
     private var accessHeader: String?
 
+    #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+    /// Shows the ads; without one (an app with its own player UI) no ads
+    /// play.
+    weak var adHost: (any AdContainerHost)?
+    /// The impression's ads, from the player config; nil plays none.
+    private var ads: PlayerAds?
+    /// The current player's ad breaks.
+    private var adScheduler: AdBreakScheduler?
+    private var adDriver: IMAAdDriver?
+    #endif
+
     public init(options: EYZFlowPlayerOptions) {
         self.options = options
         coordinator = PlaybackCoordinator(
@@ -83,7 +97,13 @@ public final class EYZFlowPlayback {
     /// the player has the stream, or the playback failed.
     public func start() async {
         guard state == .loading, player == nil else { return }
-        await coordinator.start()
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            async let adTag = Self.adTag(for: options)
+            await coordinator.start()
+            setUpAds(adTag: await adTag)
+        #else
+            await coordinator.start()
+        #endif
         guard state == .loading else { return }
         switch coordinator.status {
         case .ready(let accessHeader):
@@ -124,6 +144,9 @@ public final class EYZFlowPlayback {
     /// the TV counts as the phone's one stream). Nil when nothing plays.
     public func handOverToCast() -> CastMedia? {
         guard state == .playing, let player else { return nil }
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            if adScheduler?.inBreak == true { return nil }
+        #endif
         let position = currentPosition
         player.pause()
         tracker.update(isReady: true, isPlaying: false, isBuffering: false, position: position, duration: currentDuration)
@@ -198,6 +221,21 @@ public final class EYZFlowPlayback {
         activateAudioSession()
         observe(player: player, item: item)
         state = .playing
+        startContent(player)
+    }
+
+    /// Plays the content, after a pre-roll if there is one.
+    private func startContent(_ player: AVPlayer) {
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            if let scheduler = makeAdScheduler(for: player) {
+                Task { [weak self] in
+                    await scheduler.beforeContent()
+                    guard let self, self.adScheduler === scheduler, self.player === player else { return }
+                    if self.options.autoplay { player.play() }
+                }
+                return
+            }
+        #endif
         if options.autoplay { player.play() }
     }
 
@@ -254,8 +292,9 @@ public final class EYZFlowPlayback {
                 MainActor.assumeIsolated { self?.mediaSelectionChanged() }
             },
         ]
+        // Every half second: ad breaks are found by the position moving on.
         timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 1, preferredTimescale: 600),
+            forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -322,12 +361,18 @@ public final class EYZFlowPlayback {
         lastTickPosition = position
         if tracker.isPlaying { recorder?.report(position) }
         sync()
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            adScheduler?.contentPosition(position)
+        #endif
     }
 
     private func timeJumped() {
         let from = lastTickPosition
         let to = currentPosition
         lastTickPosition = to
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            adScheduler?.contentSeeked(to: to)
+        #endif
         guard abs((to - from).inSecondsDouble) >= 1 else { return }
         tracker.seeked(from: from, to: to, duration: currentDuration)
         if tracker.hasStarted { recorder?.checkpoint(to) }
@@ -379,6 +424,10 @@ public final class EYZFlowPlayback {
     private func reachedEnd() {
         tracker.reachedEnd(position: currentPosition, duration: currentDuration)
         recorder?.finish()
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            // A VMAP's post-roll, on a stream without markers.
+            if let adScheduler { Task { await adScheduler.contentCompleted() } }
+        #endif
     }
 
     private func playbackFailed(_ message: String) {
@@ -406,6 +455,14 @@ public final class EYZFlowPlayback {
     }
 
     private func teardown() {
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            if let adScheduler {
+                self.adScheduler = nil
+                adScheduler.dispose()
+                adDriver = nil
+                adHost?.adStateChanged(inBreak: false, adPlaying: false)
+            }
+        #endif
         if let timeObserver { player?.removeTimeObserver(timeObserver) }
         timeObserver = nil
         observations.forEach { $0.invalidate() }
@@ -419,4 +476,56 @@ public final class EYZFlowPlayback {
         keyLoader = nil
     }
 }
+
+// MARK: - Ads
+
+#if os(iOS) && canImport(GoogleInteractiveMediaAds)
+extension EYZFlowPlayback {
+    /// The config's ad tag: the dashboard config (when `configID` is set)
+    /// with `options.config` over it. Nil when `features.ads` is off or the
+    /// tag is empty: then no ad request is made at all.
+    fileprivate static func adTag(for options: EYZFlowPlayerOptions) async -> String? {
+        var config = PlayerConfig.defaults
+        if let id = options.configID, !id.isEmpty,
+           let remote = await PlayerConfigClient(endpoints: options.endpoints).load(id) {
+            config = remote
+        }
+        return config.merged(with: options.config).adTagToPlay
+    }
+
+    fileprivate func setUpAds(adTag: String?) {
+        guard let adTag, ads == nil else { return }
+        let ads = PlayerAds(adTagURL: adTag)
+        let master = options.source.hlsStreamURL
+        ads.loadMarkers { await loadHLSAdBreaks(master: master) }
+        self.ads = ads
+    }
+
+    /// The ad breaks for a new player, when the impression has ads and an
+    /// ad host shows them.
+    fileprivate func makeAdScheduler(for player: AVPlayer) -> AdBreakScheduler? {
+        guard let ads, let adHost else { return nil }
+        let driver = IMAAdDriver(adTagURL: ads.adTagURL, player: player, host: adHost)
+        let scheduler = AdBreakScheduler(ads: ads, driver: driver) { [weak player] in
+            // AirPlay: no ads on the TV.
+            player?.isExternalPlaybackActive ?? false
+        }
+        driver.scheduler = scheduler
+        scheduler.onBreakStarted = { [weak self] in self?.tracker.adBreakStarted() }
+        scheduler.onBreakEnded = { [weak self] in self?.tracker.adBreakEnded() }
+        scheduler.onChange = { [weak self, weak scheduler] in
+            guard let self, let scheduler, scheduler === self.adScheduler else { return }
+            self.adHost?.adStateChanged(inBreak: scheduler.inBreak, adPlaying: scheduler.adPlaying)
+        }
+        adDriver = driver
+        adScheduler = scheduler
+        return scheduler
+    }
+
+    /// The ad host's view is on screen: a request waiting for it goes.
+    func adContainerAppeared() {
+        adDriver?.containerAppeared()
+    }
+}
+#endif
 #endif

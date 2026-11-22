@@ -23,6 +23,9 @@ struct LoaderView: View {
     @AppStorage("storefrontID") private var storefrontID = ""
     @AppStorage("playerKey") private var playerKey = ""
     @AppStorage("startAt") private var startAt = ""
+    // Launch with EYZFLOW_AD_TAG set to prefill the ad tag.
+    @AppStorage("adTag") private var adTag = ProcessInfo.processInfo.environment["EYZFLOW_AD_TAG"] ?? ""
+    @AppStorage("configID") private var configID = ""
     @State private var log: [String] = []
 
     var body: some View {
@@ -42,6 +45,8 @@ struct LoaderView: View {
                         field("Start at (seconds)", text: $startAt)
                     }
                     field("Player key (pk_…)", text: $playerKey)
+                    field("Player config (cfg_…)", text: $configID)
+                    field("Ad tag URL (VAST or VMAP; turns ads on)", text: $adTag)
                     Button("Play", action: play)
                         .disabled(streamID.trimmed.isEmpty)
                 }
@@ -77,6 +82,11 @@ struct LoaderView: View {
                 : .trailer(catalogueID: id),
             progressSeconds: Double(startAt.trimmed),
             playerKey: playerKey.trimmed.nilIfEmpty,
+            configID: configID.trimmed.nilIfEmpty,
+            config: adTag.trimmed.isEmpty ? nil : PlayerConfigOverride(
+                features: PlayerFeaturesOverride(ads: true),
+                ads: PlayerAdsConfig(adTagURL: adTag.trimmed)
+            ),
             drmAuthorization: token.isEmpty ? nil : (isViewerToken ? "Bearer \(token)" : token),
             storefrontID: isViewerToken ? storefrontID.trimmed.nilIfEmpty : nil,
             drmParameters: isViewerToken ? ["source": "internal"] : [:],

@@ -20,8 +20,13 @@ public struct EYZFlowPlayerOptions: Sendable {
     /// check and no analytics. The app's bundle id must be on the key's
     /// allowed apps.
     public var playerKey: String?
-    /// A player config from the dashboard (Player → Configs), `cfg_…`.
+    /// A player config from the dashboard (Player → Configs), `cfg_…`. Its
+    /// ads (`features.ads` and `ads.adTagUrl`) play on iPhone and iPad.
     public var configID: String?
+    /// Wins over the dashboard config, field by field, as the web player's
+    /// inline `config`; e.g. `PlayerConfigOverride(features: .init(ads: true),
+    /// ads: PlayerAdsConfig(adTagURL: tag))`.
+    public var config: PlayerConfigOverride?
     /// The viewer's `Authorization` for DRM, e.g. `Bearer <token>`.
     public var drmAuthorization: String?
     /// Opens a playback session for the stream and device limits.
@@ -62,6 +67,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         progressSeconds: Double? = nil,
         playerKey: String? = nil,
         configID: String? = nil,
+        config: PlayerConfigOverride? = nil,
         drmAuthorization: String? = nil,
         storefrontID: String? = nil,
         drmParameters: [String: JSONValue] = [:],
@@ -85,6 +91,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         self.progressSeconds = progressSeconds
         self.playerKey = playerKey
         self.configID = configID
+        self.config = config
         self.drmAuthorization = drmAuthorization
         self.storefrontID = storefrontID
         self.drmParameters = drmParameters

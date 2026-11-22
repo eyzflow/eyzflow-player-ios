@@ -15,10 +15,14 @@ rules built in, the same as the EYZFlow web player and the Flutter package
 - **playback sessions** for the plan's stream and device limits, with the
   same messages as the web and Flutter players,
 - **playback quality analytics** ("beats", `POST /v1/player/beat`),
-- **watch progress** for films, saved where the app says.
+- **watch progress** for films, saved where the app says,
+- **ads** on iPhone and iPad from the player config, through Google IMA, at
+  the stream's ad break markers.
 
-Requirements: iOS 16, iPadOS 16, tvOS 16, Swift 6. No third-party
-dependencies.
+Requirements: iOS 16, iPadOS 16, tvOS 16, Swift 6. One third-party
+dependency: Google's
+[IMA SDK for iOS](https://github.com/googleads/swift-package-manager-google-interactive-media-ads-ios)
+(`GoogleInteractiveMediaAds`, linked on iOS only).
 
 ## Install
 
@@ -93,6 +97,55 @@ and when the app leaves, and as completed at the end. Trailers save nothing.
   playback session, analytics and watch progress carry on. Stopping hands
   the film back to the phone where the TV was. `castReceiverAppID: nil`
   turns Chromecast off.
+- **Ads:** nothing to add for the player. IMA is a dynamic framework that
+  Xcode embeds with the package. If your app asks for tracking
+  permission (App Tracking Transparency), ask before playback so IMA can use
+  the advertising identifier; otherwise IMA requests ads without it.
+
+### Ads
+
+The player plays ads on iPhone and iPad when its config has **Ads** on and an
+**Ad tag URL** (dashboard: Player → Configs; `features.ads` and
+`ads.adTagUrl`), either from `configID` or from `config`, which wins over the
+dashboard config:
+
+```swift
+EYZFlowPlayerOptions(
+    streamID: streamID,
+    title: "The film",
+    configID: "cfg_…",                       // or, inline:
+    config: PlayerConfigOverride(
+        features: PlayerFeaturesOverride(ads: true),
+        ads: PlayerAdsConfig(adTagURL: "https://pubads.g.doubleclick.net/gampad/ads?…")
+    )
+)
+```
+
+With Ads off, or an empty tag, no ad request is made at all. The tag is a
+VAST or VMAP tag, requested through Google IMA, which draws the ad, its
+countdown, skip button and click-through over the player.
+
+- **Streams with ad break markers** (Stream → Signals → Ad break; the backend
+  writes them into the HLS playlists as SCTE-35 `EXT-X-DATERANGE`s): ads play
+  only at the markers. A marker at the start is a pre-roll; every other one
+  is a mid-roll, requested from the tag when playback reaches it. Each plays
+  once; markers passed by seeking do not play. The markers win over a VMAP's
+  own schedule: at a marker only its pre-roll plays (none if it has no
+  pre-roll), and its mid-rolls and post-roll never do, so use a VAST tag for
+  these streams.
+- **Streams without markers** follow the tag: a VAST pre-roll, or a VMAP's
+  pre-roll, mid-rolls and post-roll.
+- The content waits at a break until the ad starts, at most 12 s; an empty,
+  failed or blocked tag lets it play on, with no error.
+- During an ad AVKit's controls, Picture in Picture and the Cast button are
+  off. No ads play on AirPlay or while casting, and when casting hands the
+  film back, neither the pre-roll nor a break already played plays again.
+- Apple TV plays no ads (IMA for tvOS is a separate SDK).
+- `EYZFlowPlayback` on its own (an app with its own player UI) plays no
+  ads: they need the player screen's ad layer.
+- Events: `adBreakStarted` and `adBreakEnded` around each break, including
+  one that turns out to have no ad. Analytics count the content only: ad
+  time is neither played, paused nor startup time.
 
 ## Targets
 
@@ -152,7 +205,8 @@ code (`DEVICE_LIMIT`, `APP_NOT_ALLOWED`, …) fails with that code.
 `PlaybackEvent` cases: `ready`, `started`, `paused`, `resumed`,
 `seeked(from:)`, `bufferingStarted`, `bufferingEnded`, `error(message:)`,
 `audioTrackChanged(language:)`, `subtitleTrackChanged(language:)`,
-`completed`, `closed`; each with `sourceId`, `position` and `duration`.
+`adBreakStarted`, `adBreakEnded`, `completed`, `closed`; each with
+`sourceId`, `position` and `duration`.
 
 ### Clients and models
 
@@ -167,6 +221,8 @@ code (`DEVICE_LIMIT`, `APP_NOT_ALLOWED`, …) fails with that code.
 | `BeatCollector`, `BeatTransport`, `HTTPBeatSender`, `Beat` | Analytics beats (interval floor 10 s; 2xx, 400, 401 and 413 count as delivered; unsent errors go with the next beat; a final beat on stop). |
 | `PlaybackEventAdapter` | Feeds `PlaybackEvent`s into a `BeatCollector`. |
 | `PlayerConfig`, `PlayerConfigOverride`, `mergePlayerConfig(_:_:)`, `PlayerConfigClient` | Dashboard configs, merged with an inline override; loaded once per API origin and id, nil (the defaults) on failure or after 5 s. |
+| `PlayerConfig.adTagToPlay`, `PlayerAds`, `AdBreakScheduler`, `AdDriver` | The ad gate, and when ads play (IMA-free; the player's IMA driver does the SDK work). |
+| `AdBreak`, `AdBreakSchedule`, `parseHLSAdBreaks(_:)`, `loadHLSAdBreaks(http:master:)` | Ad break markers from the HLS playlists; each played once, none passed by seeking. |
 | `ThumbnailTrack`, `ThumbnailLoader` | WebVTT thumbnail tracks, `at(position)`, loaded once per URL. |
 | `EYZFlowSource`, `EYZFlowSourceType` | The stream source: id, title, poster, DRM header, film or trailer, progress, and its HLS, DASH, FairPlay, Widevine and thumbnail URLs. |
 | `HTTPClient`, `URLSessionHTTPClient` | The network, behind a protocol. |
@@ -185,14 +241,16 @@ fixtures and expectations.
 
 ## Not yet
 
-- Player configs (`configID`) are loaded for the key check but do not style
-  AVKit's player.
+- Player configs (`configID`) give the key check and the ads, but do not
+  style AVKit's player.
+- No "ad in 5 s" notice before a mid-roll.
 
 ## Example
 
 `Example/EYZFlowPlayerExample.xcodeproj` is a loader app for iPhone, iPad and
 Apple TV: a stream id, the viewer's token, a storefront and a player key, and
-a log of every playback event. For a device, put your Apple team in
+a log of every playback event, and an Ad tag URL field that turns ads on
+(Google's sample tags work). For a device, put your Apple team in
 `Example/Config/Team.xcconfig` (git-ignored): `DEVELOPMENT_TEAM = <team id>`.
 
 ## Develop
