@@ -13,6 +13,8 @@ TVOS_DEPLOYMENT_TARGET = 16.0
 SUPPORTS_MACCATALYST = NO
 
 SWIFT_VERSION = 6.0
+// Embedded frameworks (Google IMA) load from the app's Frameworks folder.
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
 CODE_SIGN_STYLE = Automatic
 ASSETCATALOG_COMPILER_APPICON_NAME =
 

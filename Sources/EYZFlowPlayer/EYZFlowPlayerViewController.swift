@@ -44,6 +44,12 @@ public final class EYZFlowPlayerViewController: UIViewController {
     private var castScanned = false
     private let castButton = UIButton(type: .system)
     private let castingView = CastingView()
+
+    /// IMA draws ads here, over AVKit's player. It lets every touch through
+    /// outside an ad break.
+    private let adView = UIView()
+    private let adSpinner = UIActivityIndicatorView(style: .large)
+    private var inAdBreak = false
     #endif
 
     public init(options: EYZFlowPlayerOptions) {
@@ -55,6 +61,9 @@ public final class EYZFlowPlayerViewController: UIViewController {
         #endif
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
+        #if os(iOS) && canImport(GoogleInteractiveMediaAds)
+            playback.adHost = self
+        #endif
     }
 
     @available(*, unavailable)
@@ -155,7 +164,8 @@ public final class EYZFlowPlayerViewController: UIViewController {
             // was dismissed.
             self?.playerShown = true
             #if os(iOS)
-                // After AVKit laid out its own controls, so it sits above them.
+                // After AVKit laid out its own controls, so they sit above them.
+                self?.addAdView(to: controller)
                 self?.addCastButton(to: controller)
             #endif
         }
@@ -286,7 +296,7 @@ extension EYZFlowPlayerViewController {
 
     private func castChanged() {
         guard let cast else { return }
-        castButton.isHidden = cast.devices.isEmpty || cast.isCasting
+        castButton.isHidden = cast.devices.isEmpty || cast.isCasting || inAdBreak
         castButton.superview?.bringSubviewToFront(castButton)
         if playback.state == .casting { castingView.render(cast.state) }
     }
@@ -305,7 +315,7 @@ extension EYZFlowPlayerViewController {
         castButton.accessibilityLabel = NSLocalizedString("Cast to a TV", comment: "Opens the Chromecast picker")
         castButton.removeTarget(nil, action: nil, for: .allEvents)
         castButton.addTarget(self, action: #selector(castTapped), for: .primaryActionTriggered)
-        castButton.isHidden = cast?.devices.isEmpty ?? true
+        castButton.isHidden = (cast?.devices.isEmpty ?? true) || inAdBreak
         castButton.removeFromSuperview()
         castButton.translatesAutoresizingMaskIntoConstraints = false
         controller.view.addSubview(castButton)
@@ -361,6 +371,66 @@ extension EYZFlowPlayerViewController {
         // The phone plays on where the TV was (`render(.playing)`).
     }
 }
+#endif
+
+// MARK: - Ads
+
+#if os(iOS)
+extension EYZFlowPlayerViewController {
+    /// The ad view, over AVKit's player (and moved to a new player after
+    /// casting hands playback back).
+    private func addAdView(to controller: AVPlayerViewController) {
+        #if canImport(GoogleInteractiveMediaAds)
+            if adView.superview !== controller.view {
+                adView.removeFromSuperview()
+                adView.backgroundColor = .clear
+                adView.isUserInteractionEnabled = inAdBreak
+                adView.translatesAutoresizingMaskIntoConstraints = false
+                adSpinner.color = .white
+                adSpinner.hidesWhenStopped = true
+                adSpinner.translatesAutoresizingMaskIntoConstraints = false
+                if adSpinner.superview == nil { adView.addSubview(adSpinner) }
+                controller.view.addSubview(adView)
+                NSLayoutConstraint.activate([
+                    adView.topAnchor.constraint(equalTo: controller.view.topAnchor),
+                    adView.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor),
+                    adView.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+                    adView.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
+                    adSpinner.centerXAnchor.constraint(equalTo: adView.centerXAnchor),
+                    adSpinner.centerYAnchor.constraint(equalTo: adView.centerYAnchor),
+                ])
+            } else {
+                controller.view.bringSubviewToFront(adView)
+            }
+            playback.adContainerAppeared()
+        #endif
+    }
+}
+
+#if canImport(GoogleInteractiveMediaAds)
+extension EYZFlowPlayerViewController: AdContainerHost {
+    var adContainer: (view: UIView, viewController: UIViewController)? {
+        guard let playerController, adView.superview === playerController.view, adView.window != nil else { return nil }
+        return (adView, playerController)
+    }
+
+    func adStateChanged(inBreak: Bool, adPlaying: Bool) {
+        inAdBreak = inBreak
+        // AVKit's controls (seek, tracks, Picture in Picture, AirPlay) and the
+        // Cast button are off during a break; the ad view takes the touches.
+        playerController?.showsPlaybackControls = !inBreak
+        playerController?.canStartPictureInPictureAutomaticallyFromInline = !inBreak
+        adView.isUserInteractionEnabled = inBreak
+        adView.backgroundColor = adPlaying ? .black : .clear
+        if inBreak, !adPlaying {
+            adSpinner.startAnimating()
+        } else {
+            adSpinner.stopAnimating()
+        }
+        castButton.isHidden = (cast?.devices.isEmpty ?? true) || (cast?.isCasting ?? false) || inBreak
+    }
+}
+#endif
 #endif
 
 // MARK: - AVPlayerViewControllerDelegate

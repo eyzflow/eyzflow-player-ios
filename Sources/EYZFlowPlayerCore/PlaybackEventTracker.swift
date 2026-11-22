@@ -19,6 +19,7 @@ public final class PlaybackEventTracker {
     private var buffering = false
     private var completed = false
     private var closed = false
+    private var inAdBreak = false
     private var lastErrorMessage: String?
     private var lastPosition: Duration = .zero
     private var lastDuration: Duration?
@@ -104,9 +105,25 @@ public final class PlaybackEventTracker {
         emit(.subtitleTrackChanged(sourceId: sourceID, language: language, position: lastPosition, duration: lastDuration))
     }
 
+    /// An ad break began. Reported once per break, also for one that turns
+    /// out to have no ad.
+    public func adBreakStarted() {
+        guard !closed, !inAdBreak else { return }
+        inAdBreak = true
+        emit(.adBreakStarted(sourceId: sourceID, position: lastPosition, duration: lastDuration))
+    }
+
+    /// The ad break is over.
+    public func adBreakEnded() {
+        guard !closed, inAdBreak else { return }
+        inAdBreak = false
+        emit(.adBreakEnded(sourceId: sourceID, position: lastPosition, duration: lastDuration))
+    }
+
     /// The player went away. Reported once, always last.
     public func close() {
         guard !closed else { return }
+        if inAdBreak { adBreakEnded() }
         closed = true
         emit(.closed(sourceId: sourceID, position: lastPosition, duration: lastDuration))
     }

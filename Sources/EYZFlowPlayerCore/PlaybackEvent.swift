@@ -33,6 +33,14 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
     case audioTrackChanged(sourceId: String, language: String?, position: Duration, duration: Duration? = nil)
     /// The viewer switched subtitle track; nil `language` is subtitles off.
     case subtitleTrackChanged(sourceId: String, language: String?, position: Duration, duration: Duration? = nil)
+    /// An ad break began: the content stopped (or has not started yet) while
+    /// an ad from the player config's ad tag is requested and played.
+    /// Everything the content reports until `adBreakEnded` (its pause, its
+    /// resume) is the ad break's doing, not the viewer's.
+    case adBreakStarted(sourceId: String, position: Duration, duration: Duration? = nil)
+    /// The ad break is over: played, empty, failed or timed out. The content
+    /// plays on.
+    case adBreakEnded(sourceId: String, position: Duration, duration: Duration? = nil)
     /// Playback reached the end. Reported once; only `closed` follows.
     case completed(sourceId: String, position: Duration, duration: Duration? = nil)
     /// The player was disposed. Reported once and always last.
@@ -44,6 +52,7 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
              .resumed(let id, _, _), .seeked(let id, _, _, _), .bufferingStarted(let id, _, _),
              .bufferingEnded(let id, _, _), .error(let id, _, _, _),
              .audioTrackChanged(let id, _, _, _), .subtitleTrackChanged(let id, _, _, _),
+             .adBreakStarted(let id, _, _), .adBreakEnded(let id, _, _),
              .completed(let id, _, _), .closed(let id, _, _):
             id
         }
@@ -55,6 +64,7 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
              .resumed(_, let p, _), .seeked(_, _, let p, _), .bufferingStarted(_, let p, _),
              .bufferingEnded(_, let p, _), .error(_, _, let p, _),
              .audioTrackChanged(_, _, let p, _), .subtitleTrackChanged(_, _, let p, _),
+             .adBreakStarted(_, let p, _), .adBreakEnded(_, let p, _),
              .completed(_, let p, _), .closed(_, let p, _):
             p
         }
@@ -66,6 +76,7 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
              .resumed(_, _, let d), .seeked(_, _, _, let d), .bufferingStarted(_, _, let d),
              .bufferingEnded(_, _, let d), .error(_, _, _, let d),
              .audioTrackChanged(_, _, _, let d), .subtitleTrackChanged(_, _, _, let d),
+             .adBreakStarted(_, _, let d), .adBreakEnded(_, _, let d),
              .completed(_, _, let d), .closed(_, _, let d):
             d
         }
@@ -84,6 +95,8 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
         case .error: "PlaybackError"
         case .audioTrackChanged: "PlaybackAudioTrackChanged"
         case .subtitleTrackChanged: "PlaybackSubtitleTrackChanged"
+        case .adBreakStarted: "PlaybackAdBreakStarted"
+        case .adBreakEnded: "PlaybackAdBreakEnded"
         case .completed: "PlaybackCompleted"
         case .closed: "PlaybackClosed"
         }
@@ -138,6 +151,10 @@ public final class PlaybackEventAdapter {
             collector.seeked(to: position, duration: duration)
         case .error(_, let message, _, _):
             collector.error(code: "PLAYBACK_FAILED", message: message, position: position)
+        case .adBreakStarted:
+            collector.beginAd()
+        case .adBreakEnded:
+            collector.endAd()
         case .completed:
             playing = false
             collector.completed(position: position, duration: duration)

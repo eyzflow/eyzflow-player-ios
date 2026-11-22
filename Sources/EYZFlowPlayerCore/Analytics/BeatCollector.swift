@@ -23,6 +23,11 @@ public final class BeatCollector {
     private let now: MonotonicClock
     private let createdAt: Int
     private var since: Int
+    /// Where video startup is measured from: creation, moved on by the time
+    /// a pre-roll took.
+    private var startRef: Int
+    /// Since when an ad break has held the content, or nil outside one.
+    private var adSince: Int?
     public private(set) var state: BeatState = .startup
     private var isReady = false
     private var everPlayed = false
@@ -49,6 +54,31 @@ public final class BeatCollector {
         self.now = now ?? makeMonotonicClock()
         createdAt = self.now()
         since = createdAt
+        startRef = createdAt
+    }
+
+    /// An ad break is holding the content.
+    public var inAdBreak: Bool { adSince != nil }
+
+    /// An ad break began. Until `endAd()` the time counts as neither played,
+    /// paused nor stalled, nor towards video startup, and the content's own
+    /// state changes are ignored: the impression measures the content only.
+    public func beginAd() {
+        if adSince == nil { adSince = now() }
+    }
+
+    /// The ad break is over: the content's clock runs again from where it
+    /// stopped.
+    public func endAd() {
+        guard let adSince else { return }
+        self.adSince = nil
+        let end = now()
+        let spent = end - adSince
+        since += spent
+        // A position reported during the break is where the content waits;
+        // one from before it moved on only while the content played.
+        positionAt = positionAt < adSince ? positionAt + spent : end
+        if !everPlayed { startRef += spent }
     }
 
     /// The player is initialized and can play: its own startup is over.
@@ -62,10 +92,11 @@ public final class BeatCollector {
     /// The player reports playing. The first time, that is the first frame.
     public func playing(position: Duration? = nil, duration: Duration? = nil) {
         observe(position, duration)
+        if inAdBreak { return }
         if !everPlayed {
             everPlayed = true
             if !isReady { ready() }
-            videoStartupMs = now() - createdAt
+            videoStartupMs = now() - startRef
             enter(.playing)
             onMilestone?()
             return
@@ -76,6 +107,7 @@ public final class BeatCollector {
 
     public func paused(position: Duration? = nil, duration: Duration? = nil) {
         observe(position, duration)
+        if inAdBreak { return }
         if !everPlayed { return }
         if state == .ended || state == .error { return }
         enter(.paused)
@@ -83,7 +115,7 @@ public final class BeatCollector {
 
     public func bufferingStarted(position: Duration? = nil, duration: Duration? = nil) {
         observe(position, duration)
-        guard everPlayed, state == .playing else { return }
+        guard !inAdBreak, everPlayed, state == .playing else { return }
         if let lastSeekAt, now() - lastSeekAt <= Self.seekSettleMs {
             enter(.seeking)
             return
@@ -95,7 +127,7 @@ public final class BeatCollector {
     /// Buffering ended; `isPlaying` says whether playback carries on.
     public func bufferingEnded(position: Duration? = nil, duration: Duration? = nil, isPlaying: Bool = true) {
         observe(position, duration)
-        guard state == .buffering || state == .seeking else { return }
+        guard !inAdBreak, state == .buffering || state == .seeking else { return }
         enter(isPlaying ? .playing : .paused)
     }
 
@@ -149,7 +181,7 @@ public final class BeatCollector {
 
     /// The counters so far, the time in the current state included.
     public func metrics() -> BeatMetrics {
-        let open = now() - since
+        let open = (adSince ?? now()) - since
         var played = playedMs
         var paused = pausedMs
         var rebuffer = rebufferMs
@@ -222,7 +254,7 @@ public final class BeatCollector {
     private func estimatedPositionSOrNil() -> Double? {
         guard let known = positionS else { return nil }
         if state != .playing { return known }
-        let estimate = known + Double(now() - positionAt) / 1000
+        let estimate = known + Double((adSince ?? now()) - positionAt) / 1000
         if let durationS, estimate > durationS { return durationS }
         return estimate
     }
