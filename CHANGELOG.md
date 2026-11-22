@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `PlaybackSeeked` is reported again, once per seek, with where it started
+  and where it landed: for AVKit's controls, scrubbing and `player.seek`, also
+  while paused. AVPlayer's time observer fires on a jump before the jump
+  notification, so the seek measured 0 s and was dropped. A mid-roll seeked
+  over is no longer counted as passed (EYF-217).
+
 ## 0.3.0
 
 - Ads on Apple TV, through Google's IMA SDK for tvOS (new dependency,
