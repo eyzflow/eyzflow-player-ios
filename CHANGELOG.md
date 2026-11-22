@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - Ads on Apple TV, through Google's IMA SDK for tvOS (new dependency,
   `GoogleInteractiveMediaAdsTvOS`, tvOS only), with the same rules as on
@@ -8,6 +8,9 @@
   countdown, no ads on AirPlay. During a break the transport bar is off and
   scrubbing locked; a skippable ad's skip button takes the focus;
   Play/Pause pauses the ad, Menu leaves the player.
+- IMA's ad display container is created without companion slots on both
+  platforms: the tvOS framework lacks `IMACompanionAdSlot`, and an app using
+  that initializer failed to link.
 
 ## 0.2.0
 
