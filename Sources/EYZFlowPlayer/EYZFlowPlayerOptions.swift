@@ -51,6 +51,11 @@ public struct EYZFlowPlayerOptions: Sendable {
 
     /// Every playback event, in order.
     public var onEvent: (@MainActor @Sendable (PlaybackEvent) -> Void)?
+    /// Playback entered an intro, recap or credits signal marked on the stream
+    /// (Stream → Signals), or left one (nil). For example, offer the next
+    /// episode when `.closingCredits` starts. The same as the `signalStarted`
+    /// and `signalEnded` events.
+    public var onSignal: (@MainActor @Sendable (StreamSignal?) -> Void)?
     /// A stream or device limit refused or ended playback.
     public var onLimitReached: (@MainActor @Sendable (PlaybackLimitError) -> Void)?
     /// The player key check refused the app.
@@ -80,6 +85,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         autoplay: Bool = true,
         castReceiverAppID: String? = eyzflowCastReceiverAppID,
         onEvent: (@MainActor @Sendable (PlaybackEvent) -> Void)? = nil,
+        onSignal: (@MainActor @Sendable (StreamSignal?) -> Void)? = nil,
         onLimitReached: (@MainActor @Sendable (PlaybackLimitError) -> Void)? = nil,
         onLicenseError: (@MainActor @Sendable (PlayerLicenseError) -> Void)? = nil,
         onError: (@MainActor @Sendable (String) -> Void)? = nil,
@@ -104,6 +110,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         self.autoplay = autoplay
         self.castReceiverAppID = castReceiverAppID
         self.onEvent = onEvent
+        self.onSignal = onSignal
         self.onLimitReached = onLimitReached
         self.onLicenseError = onLicenseError
         self.onError = onError

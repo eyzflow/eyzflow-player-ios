@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Skip intro, recap and credits (EYF-215). The signals marked on a stream
+  (Stream → Signals) are read from its HLS playlist. While playback is in
+  one, a "Skip intro", "Skip recap" or "Skip credits" button shows over the
+  player on iPhone and iPad, and AVKit's own skip button on Apple TV. A skip
+  lands at the signal's end, never before it. `features.skipButtons: false`
+  hides it. The iPhone and iPad button takes the config's theme. Text in en,
+  de, fr and nl.
+- `skipButtonTypes` (EYF-223): the skip button per signal type, from the
+  player config or inline. By default intro, recap and opening credits; no
+  "Skip credits" over the closing credits unless `closingCredits: true`.
+- New `PlaybackEvent` cases `signalStarted` and `signalEnded`, and
+  `EYZFlowPlayerOptions.onSignal`, for offering the next episode at the
+  closing credits. An exhaustive `switch` over `PlaybackEvent` needs the two
+  new cases. `EYZFlowPlayback.skipSignal()`, `activeSignal` and `config`.
+- The stream's playlist is read once per playback for its markers even
+  without ads (`loadHLSMarkers`; `loadHLSAdBreaks` reads it too).
+
 ## 0.3.0
 
 - Ads on Apple TV, through Google's IMA SDK for tvOS (new dependency,

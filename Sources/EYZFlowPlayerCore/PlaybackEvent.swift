@@ -41,6 +41,13 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
     /// The ad break is over: played, empty, failed or timed out. The content
     /// plays on.
     case adBreakEnded(sourceId: String, position: Duration, duration: Duration? = nil)
+    /// Playback entered one of the stream's intro, recap or credits signals,
+    /// by playing into it or by a seek. `signalEnded` follows when it leaves,
+    /// before the next signal's start.
+    case signalStarted(sourceId: String, signal: StreamSignal, position: Duration, duration: Duration? = nil)
+    /// Playback left `signal`: it played past its end, the viewer skipped it
+    /// or seeked out of it.
+    case signalEnded(sourceId: String, signal: StreamSignal, position: Duration, duration: Duration? = nil)
     /// Playback reached the end. Reported once; only `closed` follows.
     case completed(sourceId: String, position: Duration, duration: Duration? = nil)
     /// The player was disposed. Reported once and always last.
@@ -53,6 +60,7 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
              .bufferingEnded(let id, _, _), .error(let id, _, _, _),
              .audioTrackChanged(let id, _, _, _), .subtitleTrackChanged(let id, _, _, _),
              .adBreakStarted(let id, _, _), .adBreakEnded(let id, _, _),
+             .signalStarted(let id, _, _, _), .signalEnded(let id, _, _, _),
              .completed(let id, _, _), .closed(let id, _, _):
             id
         }
@@ -65,6 +73,7 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
              .bufferingEnded(_, let p, _), .error(_, _, let p, _),
              .audioTrackChanged(_, _, let p, _), .subtitleTrackChanged(_, _, let p, _),
              .adBreakStarted(_, let p, _), .adBreakEnded(_, let p, _),
+             .signalStarted(_, _, let p, _), .signalEnded(_, _, let p, _),
              .completed(_, let p, _), .closed(_, let p, _):
             p
         }
@@ -77,6 +86,7 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
              .bufferingEnded(_, _, let d), .error(_, _, _, let d),
              .audioTrackChanged(_, _, _, let d), .subtitleTrackChanged(_, _, _, let d),
              .adBreakStarted(_, _, let d), .adBreakEnded(_, _, let d),
+             .signalStarted(_, _, _, let d), .signalEnded(_, _, _, let d),
              .completed(_, _, let d), .closed(_, _, let d):
             d
         }
@@ -97,6 +107,8 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
         case .subtitleTrackChanged: "PlaybackSubtitleTrackChanged"
         case .adBreakStarted: "PlaybackAdBreakStarted"
         case .adBreakEnded: "PlaybackAdBreakEnded"
+        case .signalStarted: "PlaybackSignalStarted"
+        case .signalEnded: "PlaybackSignalEnded"
         case .completed: "PlaybackCompleted"
         case .closed: "PlaybackClosed"
         }
@@ -112,6 +124,8 @@ public enum PlaybackEvent: Sendable, Hashable, CustomStringConvertible {
         case .error(_, let message, _, _): fields.append("message: \(message)")
         case .audioTrackChanged(_, let language, _, _), .subtitleTrackChanged(_, let language, _, _):
             fields.append("language: \(language ?? "null")")
+        case .signalStarted(_, let signal, _, _), .signalEnded(_, let signal, _, _):
+            fields.append("signal: \(signal)")
         default: break
         }
         return "\(name)(\(fields.joined(separator: ", ")))"
@@ -160,6 +174,8 @@ public final class PlaybackEventAdapter {
             collector.completed(position: position, duration: duration)
         case .closed, .audioTrackChanged, .subtitleTrackChanged:
             collector.position(position, duration: duration)
+        case .signalStarted, .signalEnded:
+            break
         }
     }
 }

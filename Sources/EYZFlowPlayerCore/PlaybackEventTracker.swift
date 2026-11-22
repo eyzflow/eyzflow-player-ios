@@ -113,6 +113,18 @@ public final class PlaybackEventTracker {
         emit(.adBreakStarted(sourceId: sourceID, position: lastPosition, duration: lastDuration))
     }
 
+    /// Playback entered `signal`.
+    public func signalStarted(_ signal: StreamSignal) {
+        guard !closed else { return }
+        emit(.signalStarted(sourceId: sourceID, signal: signal, position: lastPosition, duration: lastDuration))
+    }
+
+    /// Playback left `signal`.
+    public func signalEnded(_ signal: StreamSignal) {
+        guard !closed else { return }
+        emit(.signalEnded(sourceId: sourceID, signal: signal, position: lastPosition, duration: lastDuration))
+    }
+
     /// The ad break is over.
     public func adBreakEnded() {
         guard !closed, inAdBreak else { return }

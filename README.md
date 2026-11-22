@@ -183,6 +183,35 @@ countdown, skip button and click-through over the player.
   one that turns out to have no ad. Analytics count the content only: ad
   time is neither played, paused nor startup time.
 
+### Skip intro, recap and credits
+
+The intro, recap, opening and closing credits marked on a stream in the
+dashboard (Stream → Signals) are read from its HLS playlist, in the same
+fetch as the ad markers, with or without ads.
+
+- **iPhone and iPad:** while playback is in one, a "Skip intro", "Skip recap"
+  or "Skip credits" button shows over the player, above AVKit's bar. A tap
+  seeks to the signal's end, never before it (the first keyframe at or
+  after it), or to the end of the film, which ends it. It hides during an ad
+  break; the ad countdown moves up above it when both show. It takes the
+  config's theme: `controlsBarColor`, `textColor` and `borderRadius`.
+- **Apple TV:** the same through AVKit's own skip button
+  (`contextualActions`), over the transport bar, which the Siri Remote
+  focuses.
+- Text in en, de, fr or nl by the device language, English otherwise.
+- `features.skipButtons: false` in the config hides the button; missing
+  means on. The events still come.
+- `skipButtonTypes` picks the types with a button (`intro`, `recap`,
+  `openingCredits`, `closingCredits`): by default all but the closing
+  credits, where skipping only ends the film. Types left out keep their
+  default; an inline `PlayerConfigOverride(skipButtonTypes:)` wins per type.
+- Events: `signalStarted` and `signalEnded`, with the `StreamSignal` (type,
+  start, end, label), and `EYZFlowPlayerOptions.onSignal` (the signal, then
+  nil), e.g. to offer the next episode when `.closingCredits` starts.
+  `EYZFlowPlayback.skipSignal()` and `activeSignal` are for an app with its
+  own player UI.
+- The dashboard's `label` is passed on, not shown.
+
 ## Targets
 
 | Target | What |
@@ -279,8 +308,8 @@ fixtures and expectations.
 
 ## Not yet
 
-- Player configs (`configID`) give the key check and the ads, but do not
-  style AVKit's player.
+- Player configs (`configID`) give the key check, the ads and the skip
+  button's look, but do not style AVKit's player.
 
 ## Example
 
