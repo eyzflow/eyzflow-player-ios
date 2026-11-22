@@ -5,7 +5,7 @@ import UIKit
 #endif
 
 /// What to play and how: the stream, the viewer's credentials and the hooks
-/// the app wants. The Flutter package's `EyzflowPlayer` parameters.
+/// the app wants. The Flutter package's `EYZFlowPlayer` parameters.
 public struct EYZFlowPlayerOptions: Sendable {
     /// The EYZFlow stream id (not the catalogue id).
     public var streamID: String
