@@ -47,7 +47,7 @@ struct PlayerLicenseClientTests {
             "player_version": .string(eyzflowPlayerVersion),
             "app": ["platform": "androidtv", "id": "com.example.tv"],
         ])
-        #expect(eyzflowPlayerVersion == "ios/0.5.0")
+        #expect(eyzflowPlayerVersion == "ios/0.5.1")
     }
 
     @Test("sends config_id when given")
