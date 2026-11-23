@@ -50,6 +50,7 @@ EYZFlowPlayer.present(EYZFlowPlayerOptions(
     playerKey: "pk_…",                          // optional: key check and analytics
     drmAuthorization: "Bearer \(viewerToken)",
     storefrontID: storefrontID,                 // stream and device limits
+    offerID: offerID,                           // royalties: the seconds watched
     watchProgressStore: MyWatchHistory(),
     onLimitReached: { limit in /* STREAM_LIMIT, DEVICE_LIMIT, … */ },
     onClose: { /* the viewer closed the player */ }
@@ -75,6 +76,23 @@ struct MyWatchHistory: WatchProgressStore {
 
 Films save their position every 10 seconds while playing, on a pause, a seek
 and when the app leaves, and as completed at the end. Trailers save nothing.
+
+### Royalties
+
+Licensor royalties are counted from the seconds viewers watch. With
+`offerID` (the film or episode played), `drmAuthorization` and
+`storefrontID`, the player reports them itself to
+`POST /v1/content/storefront/{storefrontID}/playback-events`: every 30
+seconds while the film plays, at once on a pause, at the end and when the app
+goes to the background, and a last time when the player closes. Only time
+spent playing the film counts: not ads, pauses, seeks or stalls, while
+casting included. Each report carries the seconds since the previous one (at
+most 120) and one session id per playback; seconds a report could not
+deliver go with the next one. The film's catalogue id goes with it.
+
+Trailers report nothing. It works with or without a player key and
+analytics. An app that sends these events itself should stop once it passes
+`offerID`, or the seconds are counted twice.
 
 ### Host setup
 
@@ -285,7 +303,9 @@ let coordinator = PlaybackCoordinator(
         drmParameters: ["source": "internal"],
         deviceName: UIDevice.current.name,
         app: .current,              // PlayerApp(platform: .ios / .tvos, id: bundle id)
-        platform: .current          // .ios or .tvos
+        platform: .current,         // .ios or .tvos
+        offerID: offerID,           // royalty reports; nil for trailers
+        catalogueID: catalogueID
     )
 )
 coordinator.onLimitReached = { error in … }    // PlaybackLimitError

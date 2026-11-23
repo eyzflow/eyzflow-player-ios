@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Royalty usage (EYF-231): with `EYZFlowPlayerOptions.offerID`,
+  `drmAuthorization` and `storefrontID`, a film reports the seconds the viewer
+  watched to `playback-events` for licensor royalties: every 30 s while
+  playing, on a pause, at the end, when the app goes to the background and
+  when the player closes. Ads, pauses, seeks and stalls don't count, and it
+  works with or without a player key. `PlaybackCoordinatorConfig` takes
+  `offerID` and `catalogueID`; `UsageReporter` and `HTTPUsageSender` are
+  public for apps with their own player.
+
 ## 0.4.0
 
 - Skip intro, recap and credits (EYF-215). The signals marked on a stream

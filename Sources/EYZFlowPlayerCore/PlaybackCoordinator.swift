@@ -47,6 +47,12 @@ public struct PlaybackCoordinatorConfig: Sendable, Hashable {
     public var platform: PlayerPlatform
     /// False turns beats off even when the key has analytics on.
     public var analytics: Bool
+    /// The offer (film or episode) played. With `drmAuthorization` and
+    /// `storefrontID`, the seconds watched are reported for licensor
+    /// royalties. Nil for trailers.
+    public var offerID: String?
+    /// The catalogue entry played, sent with the royalty reports.
+    public var catalogueID: String?
 
     public init(
         streamID: String,
@@ -59,7 +65,9 @@ public struct PlaybackCoordinatorConfig: Sendable, Hashable {
         deviceName: String? = nil,
         app: PlayerApp? = nil,
         platform: PlayerPlatform = .current,
-        analytics: Bool = true
+        analytics: Bool = true,
+        offerID: String? = nil,
+        catalogueID: String? = nil
     ) {
         self.streamID = streamID
         self.isProtected = isProtected
@@ -72,6 +80,23 @@ public struct PlaybackCoordinatorConfig: Sendable, Hashable {
         self.app = app
         self.platform = platform
         self.analytics = analytics
+        self.offerID = offerID
+        self.catalogueID = catalogueID
+    }
+
+    /// Who and what the royalty reports count against, when there is all of
+    /// it.
+    public var usageTarget: UsageTarget? {
+        guard let offerID, !offerID.isEmpty,
+              let authorization = drmAuthorization, !authorization.isEmpty,
+              let storefrontID, !storefrontID.isEmpty
+        else { return nil }
+        return UsageTarget(
+            storefrontID: storefrontID,
+            authorization: authorization,
+            offerID: offerID,
+            catalogueID: catalogueID
+        )
     }
 }
 
@@ -88,6 +113,7 @@ public final class PlaybackCoordinator {
     private let licenseClient: PlayerLicenseClient
     private let sessionClient: PlaybackSessionClient
     private let beatSender: BeatSender
+    private let usageSender: UsageSender
     private let deviceIDStore: any DeviceIDStore
     private let scheduler: any PlaybackScheduler
     private let now: MonotonicClock?
@@ -105,6 +131,7 @@ public final class PlaybackCoordinator {
     public private(set) var status: EYZFlowPlayerStatus = .loading
     private var license: PlayerLicenseSession?
     private(set) var transport: BeatTransport?
+    private(set) var usage: UsageReporter?
     private var adapter: PlaybackEventAdapter?
     private var sessionTarget: PlaybackSessionTarget?
     private var sessionID: String?
@@ -121,6 +148,7 @@ public final class PlaybackCoordinator {
         licenseClient: PlayerLicenseClient = PlayerLicenseClient(),
         sessionClient: PlaybackSessionClient = PlaybackSessionClient(),
         beatSender: @escaping BeatSender = HTTPBeatSender().sender,
+        usageSender: @escaping UsageSender = HTTPUsageSender().sender,
         deviceIDStore: any DeviceIDStore = UserDefaultsDeviceIDStore(),
         scheduler: any PlaybackScheduler = TaskScheduler(),
         now: MonotonicClock? = nil,
@@ -134,6 +162,7 @@ public final class PlaybackCoordinator {
         self.licenseClient = licenseClient
         self.sessionClient = sessionClient
         self.beatSender = beatSender
+        self.usageSender = usageSender
         self.deviceIDStore = deviceIDStore
         self.scheduler = scheduler
         self.now = now
@@ -203,6 +232,7 @@ public final class PlaybackCoordinator {
                 startAnalytics(interval: current.heartbeatInterval)
             }
         }
+        if let target = config.usageTarget { startUsage(target) }
 
         // A storefront viewer (signed in, with a storefront): the playback
         // session counts this stream against the plan's limits and says
@@ -266,6 +296,10 @@ public final class PlaybackCoordinator {
     /// Every event the player reports.
     public func handle(event: PlaybackEvent) {
         adapter?.add(event)
+        switch event {
+        case .paused, .completed: usage?.reportSoon()
+        default: break
+        }
         if case .error(_, let message, _, _) = event {
             if let failure = Self.failure(in: message) {
                 fail(failure)
@@ -278,6 +312,7 @@ public final class PlaybackCoordinator {
     /// The app went to the background: send what there is, it may not return.
     public func onBackgrounded() {
         transport?.beatSoon()
+        usage?.reportSoon()
     }
 
     /// Ends everything; returns once the final beat and the session's close
@@ -296,11 +331,19 @@ public final class PlaybackCoordinator {
             for task in Array(pending.values) { await task.value }
         }
         await transport?.flush()
+        await usage?.flush()
+    }
+
+    /// The collector both the beats and the royalty reports read, made once.
+    private func eventCollector() -> BeatCollector {
+        if let adapter { return adapter.collector }
+        let adapter = PlaybackEventAdapter(BeatCollector(now: now))
+        self.adapter = adapter
+        return adapter.collector
     }
 
     private func startAnalytics(interval: Duration) {
-        let collector = BeatCollector(now: now)
-        adapter = PlaybackEventAdapter(collector)
+        let collector = eventCollector()
         let transport = BeatTransport(
             collector: collector,
             token: { [weak self] in self?.license?.token },
@@ -313,6 +356,20 @@ public final class PlaybackCoordinator {
         )
         transport.start()
         self.transport = transport
+    }
+
+    /// The seconds watched, for licensor royalties: the same played time as
+    /// the beats, whether they are on or not.
+    private func startUsage(_ target: UsageTarget) {
+        let collector = eventCollector()
+        let usage = UsageReporter(
+            target: target,
+            playedMs: { collector.metrics().playedMs },
+            send: usageSender,
+            scheduler: scheduler
+        )
+        usage.start()
+        self.usage = usage
     }
 
     private func startHeartbeat(target: PlaybackSessionTarget, sessionID: String, interval: Duration) {
@@ -372,6 +429,7 @@ public final class PlaybackCoordinator {
         heartbeat = nil
         license?.stop()
         let transport = self.transport
+        let usage = self.usage
         let target = sessionTarget
         let sessionID = self.sessionID
         self.sessionID = nil
@@ -379,10 +437,12 @@ public final class PlaybackCoordinator {
         endings.append(
             Task { @MainActor in
                 async let beat: Void = { await transport?.stop() }()
+                async let report: Void = { await usage?.stop() }()
                 if let target, let sessionID {
                     await sessionClient.close(target, sessionID: sessionID)
                 }
                 await beat
+                await report
             }
         )
         for ending in endings { await ending.value }

@@ -143,11 +143,15 @@ public final class EYZFlowPlayback {
                 deviceName: options.deviceName,
                 app: .current,
                 platform: .current,
-                analytics: options.analytics
+                analytics: options.analytics,
+                // Only a film counts towards royalties; a trailer reports nothing.
+                offerID: options.isProtected ? options.offerID : nil,
+                catalogueID: options.sourceType?.catalogueID
             ),
             licenseClient: PlayerLicenseClient(endpoints: options.endpoints),
             sessionClient: PlaybackSessionClient(endpoints: options.endpoints),
-            beatSender: HTTPBeatSender(endpoints: options.endpoints).sender
+            beatSender: HTTPBeatSender(endpoints: options.endpoints).sender,
+            usageSender: HTTPUsageSender(endpoints: options.endpoints).sender
         )
         tracker = PlaybackEventTracker(sourceID: options.streamID)
         recorder = options.watchProgressStore.map {
