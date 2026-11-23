@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - Royalty usage (EYF-231): with `EYZFlowPlayerOptions.offerID`,
   `drmAuthorization` and `storefrontID`, a film reports the seconds the viewer
