@@ -38,6 +38,10 @@ public struct EYZFlowPlayerOptions: Sendable {
     public var storefrontID: String?
     /// Extra DRM access-token parameters.
     public var drmParameters: [String: JSONValue]
+    /// The offer (film or episode) `streamID` plays. With `drmAuthorization`
+    /// and `storefrontID`, the player reports the seconds the viewer watched
+    /// for licensor royalties. Trailers report nothing.
+    public var offerID: String?
     /// Shown in the viewer's device list.
     public var deviceName: String?
     /// The EYZFlow API and CDN origins; production by default.
@@ -89,6 +93,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         drmAuthorization: String? = nil,
         storefrontID: String? = nil,
         drmParameters: [String: JSONValue] = [:],
+        offerID: String? = nil,
         deviceName: String? = nil,
         endpoints: EYZFlowEndpoints = EYZFlowEndpoints(),
         analytics: Bool = true,
@@ -115,6 +120,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         self.drmAuthorization = drmAuthorization
         self.storefrontID = storefrontID
         self.drmParameters = drmParameters
+        self.offerID = offerID
         self.deviceName = deviceName
         self.endpoints = endpoints
         self.analytics = analytics
