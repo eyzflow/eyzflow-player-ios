@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Playback sessions (EYF-466): the heartbeat and the close no longer send
+  `Content-Type: application/json` without a body. The API refused them (400),
+  so sessions went stale and a closed player kept counting against the plan's
+  stream limit.
+
 ## 0.5.0
 
 - Royalty usage (EYF-231): with `EYZFlowPlayerOptions.offerID`,

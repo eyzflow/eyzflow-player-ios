@@ -20,6 +20,7 @@ struct PlaybackSessionOpenTests {
         #expect(sent.url.absoluteString == "https://api.eyzflow.com/v1/content/storefront/sf%201/playback-sessions")
         #expect(sent.headers["Authorization"] == "Bearer viewer")
         #expect(sent.headers["X-Device-Id"] == "device-1")
+        #expect(sent.headers["Content-Type"] == "application/json")
         #expect(sent.json == ["stream_id": "stream-1", "platform": "tizen", "device_name": "Living room TV"])
     }
 
@@ -152,4 +153,21 @@ func closeDeletes() async {
     await PlaybackSessionClient(http: FakeHTTPClient { _ in throw Offline() }).close(target, sessionID: "ps_1")
 
     #expect(http.calls == ["DELETE /v1/content/storefront/sf%201/playback-sessions/ps_1"])
+}
+
+// The API answers 400 to an empty body sent as application/json, which failed every heartbeat and close.
+@Test("heartbeat and close send no JSON Content-Type and no body")
+func heartbeatAndCloseWithoutContentType() async {
+    let http = FakeHTTPClient { _ in .json(["status": "active"]) }
+    let client = PlaybackSessionClient(http: http)
+    _ = await client.heartbeat(target, sessionID: "ps_1")
+    await client.close(target, sessionID: "ps_1")
+
+    #expect(http.requests.count == 2)
+    for request in http.requests {
+        #expect(request.headers["Content-Type"] == nil)
+        #expect(request.body == nil)
+        #expect(request.headers["Authorization"] == "Bearer viewer")
+        #expect(request.headers["X-Device-Id"] == "device-1")
+    }
 }
