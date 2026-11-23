@@ -124,12 +124,15 @@ public struct PlaybackSessionClient: Sendable {
         )
     }
 
-    private func headers(_ target: PlaybackSessionTarget) -> [String: String] {
-        [
-            "Content-Type": "application/json",
+    /// Content-Type only with a JSON body: the API refuses an empty body sent as application/json (400), which failed
+    /// every heartbeat and close.
+    private func headers(_ target: PlaybackSessionTarget, json: Bool = false) -> [String: String] {
+        var headers = [
             "Authorization": target.authorization,
             "X-Device-Id": target.deviceID,
         ]
+        if json { headers["Content-Type"] = "application/json" }
+        return headers
     }
 
     /// Starts watching: checks the plan's limits. Throws
@@ -148,7 +151,7 @@ public struct PlaybackSessionClient: Sendable {
         ]
         if let deviceName { body["device_name"] = .string(deviceName) }
         let (data, response) = try await http.send(
-            .json("POST", url, headers: headers(target), body: .object(body))
+            .json("POST", url, headers: headers(target, json: true), body: .object(body))
         )
         guard response.isSuccess else {
             if let limit = readLimitError(data) { throw limit }
