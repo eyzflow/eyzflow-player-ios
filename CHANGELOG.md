@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+- Chromecast tracks and progress (EYF-483): casting starts the TV with the
+  phone's audio and subtitle languages (and subtitles off), sent once the TV
+  plays. The casting screen has an Audio and Subtitles menu that switches
+  tracks on the TV, and changes made with the TV's remote menu show on the
+  phone. Stopping resumes on the phone at the TV's position with the TV's
+  languages. The cast clock and watch progress move between the receiver's
+  reports and hold while it buffers or seeks. A revoked playback session stops
+  the TV. The Cast button shows and fades with AVKit's native controls.
+
 ## 0.5.1
 
 - Playback sessions (EYF-466): the heartbeat and the close no longer send
