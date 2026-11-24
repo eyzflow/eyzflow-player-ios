@@ -47,6 +47,11 @@ let package = Package(
             name: "EYZFlowPlayerCoreTests",
             dependencies: ["EYZFlowPlayerCore"]
         ),
+        .testTarget(
+            name: "EYZFlowPlayerTests",
+            dependencies: ["EYZFlowPlayer"],
+            resources: [.copy("Fixtures")]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

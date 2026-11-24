@@ -37,7 +37,15 @@ public enum CastPlayerState: String, Sendable {
 /// The receiver's state, as its last status said.
 public struct CastPlayback: Sendable, Equatable {
     public var state: CastPlayerState
-    public var position: Duration
+    public var position: Duration { didSet { hasReportedPosition = true } }
+    /// False for partial status reports that omitted currentTime.
+    public private(set) var hasReportedPosition: Bool
+    public var tracks: [CastTrack] = []
+    /// Nil until the receiver confirms the selection. An empty list is meaningful.
+    public var activeTrackIDs: [Int]? {
+        didSet { hasReportedActiveTrackIDs = activeTrackIDs != nil }
+    }
+    private(set) var hasReportedActiveTrackIDs = false
     public var duration: Duration?
     /// Why the receiver is idle: `FINISHED`, `CANCELLED`, `INTERRUPTED`,
     /// `ERROR`, or nil.
@@ -45,14 +53,20 @@ public struct CastPlayback: Sendable, Equatable {
 
     public init(
         state: CastPlayerState = .idle,
-        position: Duration = .zero,
+        position: Duration? = nil,
         duration: Duration? = nil,
         idleReason: String? = nil
     ) {
         self.state = state
-        self.position = position
+        self.position = position ?? .zero
+        hasReportedPosition = position != nil
         self.duration = duration
         self.idleReason = idleReason
+    }
+
+    mutating func estimatePosition(_ estimate: Duration) {
+        position = estimate
+        hasReportedPosition = false
     }
 
     public var isFinished: Bool { state == .idle && idleReason == "FINISHED" }
@@ -65,11 +79,19 @@ public struct CastPlayback: Sendable, Equatable {
         if let state = status["playerState"]?.stringValue.flatMap(CastPlayerState.init(rawValue:)) {
             next.state = state
         }
+        next.hasReportedPosition = status["currentTime"]?.numberValue != nil
         if let seconds = status["currentTime"]?.numberValue {
             next.position = .milliseconds(Int64((seconds * 1000).rounded()))
         }
         if let seconds = status["media"]?["duration"]?.numberValue, seconds > 0 {
             next.duration = .milliseconds(Int64((seconds * 1000).rounded()))
+        }
+        if let tracks = status["media"]?["tracks"]?.arrayValue {
+            next.tracks = tracks.compactMap(CastTrack.init)
+        }
+        next.hasReportedActiveTrackIDs = false
+        if let ids = status["activeTrackIds"]?.arrayValue {
+            next.activeTrackIDs = ids.compactMap { $0.numberValue.flatMap(Int.init(exactly:)) }
         }
         next.idleReason = status["idleReason"]?.stringValue
         return next
@@ -83,6 +105,7 @@ public struct CastMedia: Sendable, Equatable {
     public var contentType: String
     public var title: String
     public var posterURL: String?
+    public var trackSelection = CastTrackSelection()
     public var startAt: Duration
     /// For the EYZFlow receiver: `manifestUrl`, `licenseUrl`, `accessToken`.
     public var customData: [String: JSONValue]

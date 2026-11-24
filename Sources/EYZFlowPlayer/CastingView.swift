@@ -8,6 +8,7 @@ import UIKit
 final class CastingView: UIView {
     var onPlayPause: (() -> Void)?
     var onSeek: ((Duration) -> Void)?
+    var onTrackSelected: ((CastTrack.Kind, Int?) -> Void)?
     var onStop: (() -> Void)?
 
     private let posterView = UIImageView()
@@ -20,6 +21,9 @@ final class CastingView: UIView {
     private let playPauseButton = UIButton(type: .system)
     private let spinner = UIActivityIndicatorView(style: .large)
     private let stopButton = UIButton(type: .system)
+    private let tracksButton = UIButton(type: .system)
+    private var menuTracks: [CastTrack] = []
+    private var menuSelection: [Int]?
     private var dragging = false
     private var posterURL: URL?
 
@@ -61,6 +65,7 @@ final class CastingView: UIView {
     }
 
     private func setPlayback(_ playback: CastPlayback?) {
+        updateTracks(playback)
         guard let playback else {
             spinner.startAnimating()
             playPauseButton.isHidden = true
@@ -90,6 +95,38 @@ final class CastingView: UIView {
         durationLabel.text = Self.time(duration)
     }
 
+    private func updateTracks(_ playback: CastPlayback?) {
+        let tracks = playback?.tracks ?? []
+        let active = playback?.activeTrackIDs
+        tracksButton.isHidden = tracks.isEmpty
+        guard tracks != menuTracks || active != menuSelection else { return }
+        menuTracks = tracks
+        menuSelection = active
+        let menus = [CastTrack.Kind.audio, .subtitles].compactMap { kind -> UIMenu? in
+            let options = tracks.filter { $0.kind == kind }
+            guard !options.isEmpty else { return nil }
+            var actions: [UIAction] = []
+            if kind == .subtitles {
+                let off = active.map { ids in !options.contains { ids.contains($0.id) } } ?? false
+                actions.append(UIAction(title: NSLocalizedString("Off", comment: "Subtitles off"),
+                                        state: off ? .on : .off) { [weak self] _ in
+                    self?.onTrackSelected?(.subtitles, nil)
+                })
+            }
+            for track in options {
+                let title = track.name ?? track.language.flatMap(Locale.current.localizedString(forIdentifier:))
+                    ?? track.language ?? String(track.id)
+                actions.append(UIAction(title: title, state: active?.contains(track.id) == true ? .on : .off) {
+                    [weak self] _ in self?.onTrackSelected?(kind, track.id)
+                })
+            }
+            let title = kind == .audio ? NSLocalizedString("Audio", comment: "Cast audio tracks")
+                : NSLocalizedString("Subtitles", comment: "Cast subtitle tracks")
+            return UIMenu(title: title, options: .displayInline, children: actions)
+        }
+        tracksButton.menu = UIMenu(children: menus)
+    }
+
     private func build() {
         posterView.contentMode = .scaleAspectFill
         posterView.clipsToBounds = true
@@ -117,6 +154,10 @@ final class CastingView: UIView {
         play.preferredSymbolConfigurationForImage = .init(pointSize: 56)
         playPauseButton.configuration = play
         playPauseButton.addAction(UIAction { [weak self] _ in self?.onPlayPause?() }, for: .primaryActionTriggered)
+        tracksButton.setImage(UIImage(systemName: "captions.bubble"), for: .normal)
+        tracksButton.tintColor = .white
+        tracksButton.accessibilityLabel = NSLocalizedString("Audio and Subtitles", comment: "Select tracks on the TV")
+        tracksButton.showsMenuAsPrimaryAction = true
         spinner.color = .white
 
         var stop = UIButton.Configuration.tinted()
@@ -131,7 +172,9 @@ final class CastingView: UIView {
         let timeRow = UIStackView(arrangedSubviews: [elapsedLabel, slider, durationLabel])
         timeRow.spacing = 8
         timeRow.alignment = .center
-        let controls = UIStackView(arrangedSubviews: [timeRow, playPauseButton, spinner, stopButton])
+        let transport = UIStackView(arrangedSubviews: [playPauseButton, tracksButton])
+        transport.spacing = 12
+        let controls = UIStackView(arrangedSubviews: [timeRow, transport, spinner, stopButton])
         controls.axis = .vertical
         controls.spacing = 20
         controls.alignment = .center

@@ -113,10 +113,14 @@ analytics. An app that sends these events itself should stop once it passes
 
   The player looks for TVs once the film plays (the first time, iOS asks the
   viewer for the Local Network permission) and shows a Cast button when it
-  finds one. Casting hands the film over at the current position; the phone
-  shows the TV's progress, play/pause, a seek bar and Stop casting, and the
-  playback session, analytics and watch progress carry on. Stopping hands
-  the film back to the phone where the TV was. `castReceiverAppID: nil`
+  finds one. The button appears and fades with the native playback controls.
+  Casting starts at the phone's position and carries over the
+  selected audio and subtitle languages when the TV offers them. The phone
+  shows progress and controls for play, pause, seeking and track selection.
+  Analytics and watch progress continue during casting. Stop casting returns
+  to the TV's position with its last confirmed language choices, including
+  subtitles off. If the playback session is revoked, the player stops the TV.
+  `castReceiverAppID: nil`
   turns Chromecast off.
 - **Ads:** nothing to add for the player. IMA is a dynamic framework that
   Xcode embeds with the package. If your app asks for tracking

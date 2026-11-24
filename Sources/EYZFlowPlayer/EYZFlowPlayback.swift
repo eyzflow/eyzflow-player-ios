@@ -52,6 +52,7 @@ public final class EYZFlowPlayback {
     private var seeks = SeekDetector()
     private var resumed = false
     private var resumeSeconds: Double?
+    private var resumingFromCast = false
     private var accessHeader: String?
 
     /// The stream's intro, recap and credits signals, and which one playback
@@ -330,23 +331,38 @@ public final class EYZFlowPlayback {
     /// returned media starts there on the TV with the phone's access token (so
     /// the TV counts as the phone's one stream). Nil when nothing plays.
     public func handOverToCast() -> CastMedia? {
+        handOverToCast(using: nil)
+    }
+
+    /// Associates the remote transport with this playback session so revocation stops the TV.
+    public func handOverToCast(using controller: CastController?) -> CastMedia? {
         guard state == .playing, let player else { return nil }
         #if canImport(GoogleInteractiveMediaAds)
             if adScheduler?.inBreak == true { return nil }
         #endif
         let position = currentPosition
+        let tracks = item?.castTracks(audioGroup: audioGroup, subtitleGroup: subtitleGroup) ?? .init()
         player.pause()
         tracker.update(isReady: true, isPlaying: false, isBuffering: false, position: position, duration: currentDuration)
         recorder?.checkpoint(position)
+        var media = CastMedia.for(options.source, startAt: position, accessHeader: accessHeader)
+        media.trackSelection = tracks
+        handoffTracks = tracks
+        coordinator.castController = controller
         teardown()
         state = .casting
-        return CastMedia.for(options.source, startAt: position, accessHeader: accessHeader)
+        return media
     }
 
     /// What the TV reports while casting: it feeds the events, the beats and
     /// watch progress, as the phone's player would.
     public func castReported(_ playback: CastPlayback) {
         guard state == .casting else { return }
+        // While the TV loads it reports its default tracks, not the viewer's:
+        // stopping then keeps the phone's own choice.
+        if playback.state == .playing || playback.state == .paused {
+            handoffTracks = handoffTracks?.updated(with: playback)
+        }
         tracker.update(
             isReady: true,
             isPlaying: playback.state == .playing,
@@ -362,13 +378,15 @@ public final class EYZFlowPlayback {
     /// text when the TV could not play it.
     public func castEnded(_ reason: CastEndReason, at position: Duration, failure: String? = nil) {
         guard state == .casting else { return }
+        coordinator.castController = nil
         if reason == .finished {
             tracker.reachedEnd(position: position, duration: tracker.duration)
-            recorder?.finish()
+            recorder?.finish(at: position)
             return
         }
         if let failure { tracker.failed(message: failure) }
         recorder?.checkpoint(position)
+        resumingFromCast = true
         mount(from: position.inSecondsDouble)
     }
 
@@ -378,7 +396,6 @@ public final class EYZFlowPlayback {
         let source = options.source
         resumeSeconds = seconds
         resumed = false
-        groupsRequested = false
         seeks.reset(to: .milliseconds(Int64((seconds ?? 0) * 1000)))
         let asset = AVURLAsset(url: source.hlsStreamURL)
         if let accessHeader {
@@ -537,7 +554,7 @@ public final class EYZFlowPlayback {
         resumed = true
         guard let seconds = resumeSeconds, seconds > 0, let player else { return }
         // Not into the last seconds: resuming there would end at once.
-        if let duration = currentDuration?.inSecondsDouble, seconds >= duration - 5 { return }
+        if !resumingFromCast, let duration = currentDuration?.inSecondsDouble, seconds >= duration - 5 { return }
         let target = CMTime(seconds: seconds, preferredTimescale: 600)
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
         seeks.reset(to: .milliseconds(Int64(seconds * 1000)))
@@ -588,23 +605,28 @@ public final class EYZFlowPlayback {
     private var subtitleGroup: AVMediaSelectionGroup?
     private var lastAudioLanguage: String?
     private var lastSubtitleLanguage: String?
-    private var groupsRequested = false
+    private var groupLoad: Task<Void, Never>?
+    private var handoffTracks: CastTrackSelection?
+
+    func prepareTracksForCast() async {
+        loadMediaSelectionGroups()
+        await groupLoad?.value
+    }
 
     private func loadMediaSelectionGroups() {
-        guard !groupsRequested, let asset = item?.asset else { return }
-        groupsRequested = true
-        Task { [weak self] in
-            let audio = try? await asset.loadMediaSelectionGroup(for: .audible)
-            let subtitles = try? await asset.loadMediaSelectionGroup(for: .legible)
-            guard let self else { return }
+        guard groupLoad == nil, let item else { return }
+        groupLoad = Task { [weak self] in
+            let audio = try? await item.asset.loadMediaSelectionGroup(for: .audible)
+            let subtitles = try? await item.asset.loadMediaSelectionGroup(for: .legible)
+            guard let self, self.item === item, !Task.isCancelled else { return }
             audioGroup = audio
             subtitleGroup = subtitles
-            if let item, let audio {
-                lastAudioLanguage = item.currentMediaSelection.selectedMediaOption(in: audio)?.extendedLanguageTag
+            if let handoffTracks {
+                item.restoreCastTracks(handoffTracks, audioGroup: audio, subtitleGroup: subtitles)
+                self.handoffTracks = nil
             }
-            if let item, let subtitles {
-                lastSubtitleLanguage = item.currentMediaSelection.selectedMediaOption(in: subtitles)?.extendedLanguageTag
-            }
+            lastAudioLanguage = audio.flatMap { item.currentMediaSelection.selectedMediaOption(in: $0)?.extendedLanguageTag }
+            lastSubtitleLanguage = subtitles.flatMap { item.currentMediaSelection.selectedMediaOption(in: $0)?.extendedLanguageTag }
         }
     }
 
@@ -658,7 +680,7 @@ public final class EYZFlowPlayback {
         guard state != .closed else { return }
         if case .failed = state { return }
         player?.pause()
-        if player != nil { recorder?.checkpoint(tracker.position) }
+        if player != nil || state == .casting { recorder?.checkpoint(tracker.position) }
         teardown()
         state = .failed(message: message)
     }
@@ -684,6 +706,12 @@ public final class EYZFlowPlayback {
         player = nil
         updateEndScreen()
         item = nil
+        groupLoad?.cancel()
+        groupLoad = nil
+        audioGroup = nil
+        subtitleGroup = nil
+        lastAudioLanguage = nil
+        lastSubtitleLanguage = nil
         keyLoader?.onError = nil
         keyLoader = nil
         #if canImport(GoogleInteractiveMediaAds)

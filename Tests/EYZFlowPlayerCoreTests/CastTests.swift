@@ -13,11 +13,15 @@ final class FakeTV: CastConnection {
     var onError: (@MainActor (String) -> Void)?
     var onClose: (@MainActor () -> Void)?
     var calls: [String] = []
+    var edits: [[Int]] = []
     var loaded: CastMedia?
 
     func report(_ playback: CastPlayback) { onPlayback?(playback) }
     func refuse(_ reason: String) { onError?(reason) }
-    func disconnect() { onClose?() }
+    func closeFromTV() { onClose?() }
+    func disconnect() { calls.append("disconnect") }
+    func requestStatus() { calls.append("status") }
+    func setActiveTracks(_ ids: [Int]) { edits.append(ids) }
 
     func load(_ media: CastMedia) {
         loaded = media
@@ -45,6 +49,8 @@ final class FakeCastBackend: CastBackend {
     /// Fails only the first connection, like a TV that restarted on a new port.
     var firstConnectError: (any Error)?
     var scanError: (any Error)?
+    var onConnect: (() -> Void)?
+    var delayedConnection: (() async -> FakeTV)?
 
     func discover(timeout: Duration) async throws -> [CastTarget] {
         scans += 1
@@ -55,6 +61,8 @@ final class FakeCastBackend: CastBackend {
     func connect(_ target: CastTarget, appID: String) async throws -> any CastConnection {
         self.appID = appID
         connects += 1
+        onConnect?()
+        if let delayedConnection { return await delayedConnection() }
         if let firstConnectError, connects == 1 { throw firstConnectError }
         if let connectError { throw connectError }
         return tv
@@ -79,7 +87,7 @@ struct CastControllerTests {
     let cast: CastController
 
     init() {
-        cast = CastController(backend: backend, scheduler: scheduler, log: { _ in })
+        cast = CastController(backend: backend, scheduler: scheduler, now: { [scheduler] in scheduler.nowMs }, log: { _ in })
         cast.onPlayback = { [playbacks] in playbacks.value.append($0) }
         cast.onEnded = { [ended] in ended.value.append(($0, $1)) }
     }
@@ -135,7 +143,7 @@ struct CastControllerTests {
         await cast.cast(media, to: livingRoom, appID: "A")
         backend.tv.report(CastPlayback(state: .playing, position: minutes(10), duration: minutes(90)))
         backend.tv.report(CastPlayback(state: .idle, duration: minutes(90), idleReason: "FINISHED"))
-        backend.tv.disconnect()
+        backend.tv.closeFromTV()
         #expect(endings == [.finished])
         #expect(ended.value.map(\.1) == [minutes(90)])
     }
@@ -144,7 +152,7 @@ struct CastControllerTests {
     func disconnected() async {
         await cast.cast(media, to: livingRoom, appID: "A")
         backend.tv.report(CastPlayback(state: .paused, position: minutes(20)))
-        backend.tv.disconnect()
+        backend.tv.closeFromTV()
         #expect(endings == [.disconnected])
         #expect(ended.value.map(\.1) == [minutes(20)])
         #expect(!backend.tv.calls.contains("stop"))
@@ -195,6 +203,155 @@ struct CastControllerTests {
         #expect(endings == [.failed])
     }
 
+    @Test("a confirmed seek to zero hands back the beginning")
+    func confirmedZero() async {
+        await cast.cast(media, to: livingRoom, appID: "A")
+        cast.seek(to: .zero)
+        backend.tv.report(CastPlayback().updated(with: ["playerState": "PAUSED", "currentTime": 0]))
+        backend.tv.report(CastPlayback().updated(with: ["playerState": "PAUSED"]))
+        cast.stop()
+        #expect(ended.value.last?.1 == .zero)
+    }
+
+    @Test("a cancelled connection cannot retry or report a second ending")
+    func cancelledConnect() async {
+        backend.onConnect = { cast.stop() }
+        backend.connectError = Refused(description: "connection failed")
+        await cast.cast(media, to: livingRoom, appID: "A")
+        #expect(endings == [.stopped])
+        #expect(cast.state == .off)
+        #expect(backend.scans == 0)
+    }
+
+    @Test("the playing clock advances between reports and freezes for a seek or stall")
+    func estimatedPosition() async {
+        await cast.cast(media, to: livingRoom, appID: "A")
+        backend.tv.report(CastPlayback(state: .playing, position: minutes(10)))
+        await scheduler.advance(by: .seconds(3))
+        #expect(playbacks.value.last?.position == .seconds(603))
+        cast.seek(to: minutes(20))
+        backend.tv.report(CastPlayback().updated(with: ["playerState": "PLAYING"]))
+        await scheduler.advance(by: .seconds(16))
+        #expect(playbacks.value.last?.position == .seconds(603))
+        #expect(backend.tv.calls.contains("status"))
+        backend.tv.report(CastPlayback(state: .buffering, position: minutes(20)))
+        await scheduler.advance(by: .seconds(3))
+        #expect(playbacks.value.last?.position == minutes(20))
+        backend.tv.report(CastPlayback(state: .playing, position: minutes(20), duration: .seconds(1202)))
+        await scheduler.advance(by: .seconds(4))
+        cast.stop()
+        #expect(ended.value.last?.1 == .seconds(1202))
+    }
+
+    @Test("a revoked playback session stops the receiver without resuming the phone")
+    func revokedSession() async {
+        let h = Harness()
+        h.backend.heartbeat.value = { _ in .json(["status": "ended"]) }
+        await h.coordinator.start()
+        h.coordinator.castController = cast
+        await cast.cast(media, to: livingRoom, appID: "A")
+        backend.tv.report(CastPlayback(state: .playing, position: minutes(12)))
+        let lateClose = backend.tv.onClose
+        await h.advance(.seconds(30))
+        lateClose?()
+        await h.coordinator.close()
+
+        #expect(h.limits.map(\.code) == [.playbackSessionEnded])
+        #expect(cast.state == .off)
+        #expect(backend.tv.calls == ["load", "stop"])
+        #expect(endings.isEmpty)
+    }
+
+    @Test("a superseded launch cannot load or stop the next cast")
+    func lateLaunch() async {
+        let oldTV = FakeTV()
+        var pending: CheckedContinuation<FakeTV, Never>?
+        backend.delayedConnection = { await withCheckedContinuation { pending = $0 } }
+        let original = Task { await cast.cast(media, to: livingRoom, appID: "A") }
+        while pending == nil { await Task.yield() }
+        cast.stop()
+        backend.delayedConnection = nil
+        await cast.cast(media, to: livingRoom, appID: "A")
+        pending?.resume(returning: oldTV)
+        await original.value
+
+        #expect(oldTV.calls == ["disconnect"])
+        #expect(backend.tv.calls == ["load"])
+        #expect(cast.state == .connecting(livingRoom))
+        #expect(endings == [.stopped])
+    }
+
+    @Test("track changes preserve the other active tracks across partial receiver reports")
+    func trackHandoff() async {
+        var film = media
+        film.trackSelection = CastTrackSelection(audioLanguage: "en-GB", subtitles: .language("de_DE"))
+        await cast.cast(film, to: livingRoom, appID: "A")
+        let status = CastPlayback().updated(with: [
+            "playerState": "PLAYING", "activeTrackIds": [1, 99],
+            "media": ["tracks": [
+                ["type": "AUDIO", "trackId": 1, "language": "fr"],
+                ["type": "AUDIO", "trackId": 2, "language": "eng"],
+                ["type": "TEXT", "trackId": 3, "language": "deu", "name": "Deutsch"],
+            ]],
+        ])
+        backend.tv.report(status)
+        #expect(backend.tv.edits == [[2, 3, 99]])
+
+        let confirmed = status.updated(with: ["activeTrackIds": [2, 3, 99]])
+        backend.tv.report(confirmed.updated(with: ["currentTime": 12]))
+        cast.selectTrack(.audio, id: 1)
+        #expect(backend.tv.edits.last == [1, 3, 99])
+        backend.tv.report(confirmed.updated(with: ["currentTime": 13]))
+        cast.selectTrack(.subtitles, id: nil)
+        #expect(backend.tv.edits == [[2, 3, 99], [1, 3, 99], [1, 99]])
+        #expect(film.trackSelection.updated(with: confirmed) == .init(audioLanguage: "eng", subtitles: .language("deu")))
+        let off = confirmed.updated(with: ["activeTrackIds": [1, 99]])
+        #expect(film.trackSelection.updated(with: off) == .init(audioLanguage: "fr", subtitles: .off))
+        #expect(film.trackSelection.updated(with: .init()) == film.trackSelection)
+    }
+
+    @Test("the phone's tracks wait until the TV plays, since the receiver resets them when the film starts")
+    func tracksWaitForPlayback() async {
+        var film = media
+        film.trackSelection = CastTrackSelection(audioLanguage: "en", subtitles: .language("de"))
+        await cast.cast(film, to: livingRoom, appID: "A")
+        let loading = CastPlayback().updated(with: [
+            "playerState": "BUFFERING", "activeTrackIds": [1],
+            "media": ["tracks": [
+                ["type": "AUDIO", "trackId": 1, "language": "fr"],
+                ["type": "AUDIO", "trackId": 2, "language": "en"],
+                ["type": "TEXT", "trackId": 3, "language": "de"],
+            ]],
+        ])
+        backend.tv.report(loading)
+        #expect(backend.tv.edits.isEmpty)
+        backend.tv.report(loading.updated(with: ["playerState": "PLAYING"]))
+        #expect(backend.tv.edits == [[2, 3]])
+    }
+
+    @Test("subtitles off is applied once when the receiver has not confirmed its defaults")
+    func outgoingOff() async {
+        var film = media
+        film.trackSelection.subtitles = .off
+        await cast.cast(film, to: livingRoom, appID: "A")
+        let status = CastPlayback().updated(with: [
+            "playerState": "PLAYING", "media": ["tracks": [["type": "TEXT", "trackId": 3, "language": "es"]]],
+        ])
+        backend.tv.report(status)
+        backend.tv.report(status.updated(with: ["currentTime": 2]))
+        #expect(backend.tv.edits == [[]])
+        #expect(film.trackSelection.updated(with: status).subtitles == .off)
+    }
+
+    @Test("a missing currentTime keeps the handoff position until the TV reports one")
+    func unknownPosition() async {
+        await cast.cast(media, to: livingRoom, appID: "A")
+        backend.tv.report(CastPlayback().updated(with: ["playerState": "PAUSED"]))
+        await scheduler.advance(by: .seconds(5))
+        cast.stop()
+        #expect(ended.value.last?.1 == media.startAt)
+    }
+
     @Test("transport goes to the TV")
     func transport() async {
         await cast.cast(media, to: livingRoom, appID: "A")
@@ -226,6 +383,15 @@ struct CastMediaTests {
     func clear() {
         let media = CastMedia.for(source, startAt: .zero, accessHeader: nil)
         #expect(media.customData == ["manifestUrl": "https://stream.eyzflow.com/stream-1/manifest.mpd"])
+    }
+
+    @Test("HLS and DASH language tags match across regions and bibliographic spellings")
+    func trackLanguages() {
+        #expect(CastTrackSelection.matches("de-DE", "ger"))
+        #expect(CastTrackSelection.matches("fre", "fr_BE"))
+        #expect(CastTrackSelection.matches("dut", "nl"))
+        #expect(!CastTrackSelection.matches("de", "fr"))
+        #expect(!CastTrackSelection.matches("und", "und"))
     }
 
     @Test("a missing currentTime keeps the position")
@@ -322,6 +488,43 @@ struct CastChannelTests {
         channel.seek(to: .seconds(900))
         #expect(written.value.last?.json?["mediaSessionId"]?.numberValue == 7)
         #expect(written.value.last?.json?["currentTime"]?.numberValue == 900)
+    }
+
+    @Test("track edits and status requests address the active media session")
+    func trackCommands() {
+        channel.start()
+        incoming(#"{"type":"RECEIVER_STATUS","status":{"applications":[{"appId":"A534F914","transportId":"t"}]}}"#)
+        incoming(#"{"type":"MEDIA_STATUS","status":[{"mediaSessionId":7}]}"#)
+        channel.setActiveTracks([2, 4])
+        #expect(written.value.last?.json?["activeTrackIds"] == [2, 4])
+        channel.requestStatus()
+        #expect(Array(types.suffix(2)) == ["EDIT_TRACKS_INFO", "GET_STATUS"])
+        #expect(written.value.suffix(2).allSatisfy { $0.destinationID == "t" && $0.json?["mediaSessionId"] == 7 })
+    }
+
+    @Test("the receiver stops when LOAD has not returned a media session yet")
+    func stopDuringLoad() {
+        channel.start()
+        incoming(#"{"type":"RECEIVER_STATUS","status":{"applications":[{"appId":"A534F914","transportId":"t","sessionId":"s"}]}}"#)
+        channel.load(media)
+        channel.stop()
+        #expect(types.last == "STOP")
+        #expect(written.value.last?.destinationID == "receiver-0")
+        #expect(written.value.last?.json?["sessionId"] == "s")
+    }
+
+    @Test("a rejected track edit leaves the film playing")
+    func rejectedEdit() throws {
+        var errors: [String] = []
+        channel.onError = { errors.append($0) }
+        channel.start()
+        incoming(#"{"type":"RECEIVER_STATUS","status":{"applications":[{"appId":"A534F914","transportId":"t"}]}}"#)
+        channel.setActiveTracks([4])
+        let id = try #require(written.value.last?.json?["requestId"]?.numberValue)
+        incoming(#"{"type":"INVALID_REQUEST","requestId":\#(Int(id))}"#)
+        #expect(errors.isEmpty)
+        incoming(#"{"type":"LOAD_FAILED"}"#)
+        #expect(errors == ["LOAD_FAILED"])
     }
 
     @Test("answers pings, and reports refusals and launch errors")

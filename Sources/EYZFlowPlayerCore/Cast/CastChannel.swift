@@ -29,7 +29,10 @@ public final class CastChannel {
     private var frames = CastFrameBuffer()
     private var requestID = 0
     private var transportID: String?
+    private var receiverSessionID: String?
     private var mediaSessionID: Int?
+    // A receiver can reject an optional edit or poll while the film keeps playing.
+    private var optionalRequests: [Int] = []
     private var heartbeat: (any PlaybackTimer)?
     private var closed = false
 
@@ -78,9 +81,25 @@ public final class CastChannel {
         ])
     }
 
+    public func requestStatus() { sendMedia(optionalCommand("GET_STATUS")) }
+    public func setActiveTracks(_ ids: [Int]) {
+        var command = optionalCommand("EDIT_TRACKS_INFO")
+        command["activeTrackIds"] = .array(ids.map(JSONValue.int))
+        sendMedia(command)
+    }
+
     public func play() { sendMedia(mediaCommand("PLAY")) }
     public func pause() { sendMedia(mediaCommand("PAUSE")) }
-    public func stop() { sendMedia(mediaCommand("STOP")) }
+    public func stop() {
+        // LOAD can already be playing before the first media session ID arrives.
+        if mediaSessionID == nil, let receiverSessionID {
+            send(Self.receiverNamespace, to: "receiver-0", [
+                "type": "STOP", "sessionId": .string(receiverSessionID), "requestId": .int(nextRequestID()),
+            ])
+        } else {
+            sendMedia(mediaCommand("STOP"))
+        }
+    }
 
     public func seek(to position: Duration) {
         var command = mediaCommand("SEEK")
@@ -109,6 +128,11 @@ public final class CastChannel {
 
     private func handle(_ message: CastChannelMessage) {
         guard let data = message.json, let type = data["type"]?.stringValue else { return }
+        if let id = data["requestId"]?.numberValue.flatMap(Int.init(exactly:)),
+           let index = optionalRequests.firstIndex(of: id) {
+            optionalRequests.remove(at: index)
+            if type == "INVALID_REQUEST" || type == "ERROR" { return }
+        }
         switch type {
         case "PING":
             send(Self.heartbeatNamespace, to: message.sourceID, ["type": "PONG"])
@@ -141,6 +165,7 @@ public final class CastChannel {
               let app = applications.first(where: { $0["appId"]?.stringValue == appID }),
               let transport = app["transportId"]?.stringValue
         else { return }
+        receiverSessionID = app["sessionId"]?.stringValue
         transportID = transport
         send(Self.connectionNamespace, to: transport, ["type": "CONNECT"])
         onLaunched?()
@@ -150,7 +175,10 @@ public final class CastChannel {
 
     private func mediaStatus(_ data: [String: JSONValue]) {
         guard let status = data["status"]?.arrayValue?.first?.objectValue else { return }
-        if let id = status["mediaSessionId"]?.numberValue { mediaSessionID = Int(id) }
+        if let id = status["mediaSessionId"]?.numberValue.flatMap(Int.init(exactly:)), mediaSessionID != id {
+            mediaSessionID = id
+            playback = CastPlayback()
+        }
         playback = playback.updated(with: status)
         onPlayback?(playback)
     }
@@ -165,6 +193,14 @@ public final class CastChannel {
     private func mediaCommand(_ type: String) -> [String: JSONValue] {
         var command: [String: JSONValue] = ["type": .string(type), "requestId": .int(nextRequestID())]
         if let mediaSessionID { command["mediaSessionId"] = .int(mediaSessionID) }
+        return command
+    }
+
+    private func optionalCommand(_ type: String) -> [String: JSONValue] {
+        let command = mediaCommand(type)
+        // Some receivers broadcast updates without echoing the request ID.
+        if optionalRequests.count == 64 { optionalRequests.removeFirst() }
+        optionalRequests.append(requestID)
         return command
     }
 

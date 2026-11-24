@@ -63,6 +63,16 @@ struct WatchProgressRecorderTests {
         ])
     }
 
+    @Test("the receiver's final position completes watch progress after the last tick")
+    func receiverFinished() async {
+        let store = RecordingStore()
+        let recorder = recorder(store)
+        recorder.report(.seconds(118))
+        recorder.finish(at: .seconds(120))
+        await recorder.flush()
+        #expect(await store.writes.last == .init(catalogueID: "episode", seconds: 120, completed: true))
+    }
+
     @Test("saves run in order: completion after a slow progress write")
     func ordered() async {
         let store = RecordingStore()

@@ -69,9 +69,18 @@ public final class WatchProgressRecorder {
     /// The film reached its end: saved as completed, once. Later reports are
     /// ignored, so a late tick cannot reopen it.
     public func finish() {
+        complete(at: latest)
+    }
+
+    /// A receiver can report the final position after the last watch-progress tick.
+    public func finish(at position: Duration) {
+        complete(at: position.inSecondsDouble)
+    }
+
+    private func complete(at seconds: Double) {
         guard isRecording, !finished else { return }
         finished = true
-        save(latest, completed: true)
+        save(seconds, completed: true)
     }
 
     /// Waits for every save started so far.

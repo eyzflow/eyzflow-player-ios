@@ -109,6 +109,7 @@ public struct PlaybackCoordinatorConfig: Sendable, Hashable {
 /// `handle(event:)`, and calls `close()` when the player goes away.
 @MainActor
 public final class PlaybackCoordinator {
+    package weak var castController: CastController?
     public let config: PlaybackCoordinatorConfig
     private let licenseClient: PlayerLicenseClient
     private let sessionClient: PlaybackSessionClient
@@ -319,6 +320,8 @@ public final class PlaybackCoordinator {
     /// were sent.
     public func close() async {
         disposed = true
+        castController?.cancel()
+        castController = nil
         for continuation in statusContinuations.values { continuation.finish() }
         statusContinuations = [:]
         await endAll()
@@ -412,6 +415,8 @@ public final class PlaybackCoordinator {
     private func fail(_ failure: EYZFlowPlayerFailure) {
         if case .failed = status { return }
         if disposed { return }
+        castController?.cancel()
+        castController = nil
         setStatus(.failed(failure))
         switch failure {
         case .license(let error): onLicenseError?(error)
