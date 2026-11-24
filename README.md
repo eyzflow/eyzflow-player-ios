@@ -15,7 +15,8 @@ rules built in, the same as the EYZFlow web player and the Flutter package
 - **playback sessions** for the plan's stream and device limits (and whether
   the plan plays ads), with the same messages as the web and Flutter players,
 - **playback quality analytics** ("beats", `POST /v1/player/beat`),
-- **watch progress** for films, saved where the app says,
+- **watch progress** for films, saved to the EYZFlow watch history or where
+  the app says,
 - **ads** on iPhone, iPad and Apple TV from the player config, through
   Google IMA, at the stream's ad break markers.
 
@@ -30,7 +31,7 @@ the module `GoogleInteractiveMediaAds`.
 ## Install
 
 ```swift
-.package(url: "https://github.com/eyzflow/eyzflow-player-ios", from: "0.6.0"),
+.package(url: "https://github.com/eyzflow/eyzflow-player-ios", from: "0.7.0"),
 // …
 .product(name: "EYZFlowPlayer", package: "EYZFlowPlayer"),
 ```
@@ -51,7 +52,6 @@ EYZFlowPlayer.present(EYZFlowPlayerOptions(
     drmAuthorization: "Bearer \(viewerToken)",
     storefrontID: storefrontID,                 // stream and device limits
     offerID: offerID,                           // royalties: the seconds watched
-    watchProgressStore: MyWatchHistory(),
     onLimitReached: { limit in /* STREAM_LIMIT, DEVICE_LIMIT, … */ },
     onClose: { /* the viewer closed the player */ }
 ))
@@ -63,8 +63,26 @@ player, and a message with a Close button when playback is refused or fails.
 `EYZFlowPlayback` is the same without UI, for an app with its own player
 screen: it gives you the `AVPlayer`.
 
-Watch progress goes to a `WatchProgressStore` you implement, for example with
-your call to the EYZFlow watch-history API:
+### Watch progress
+
+A film (`sourceType: .film(catalogueID:)`) saves the viewer's position for
+"Continue watching" by itself. With `drmAuthorization` and `storefrontID` it
+goes to the EYZFlow watch history,
+`PUT /v1/content/storefront/{storefrontID}/watch-history` with
+`catalogue_id`, `progress_seconds` (whole seconds), `completed` and, when you
+pass `offerID`, `offer_id`. Without those credentials nothing is sent.
+Trailers save nothing.
+
+Films save their position every 10 seconds while playing, on a pause, a seek
+and when the app leaves, and as completed at the end. A film counts as
+completed from 95 % of its duration on, or from the player config's
+`watchProgress.completedPercent` (50–100; 100 means only the end itself).
+A resumed film saves nothing until playback reaches the resume point (or the
+viewer seeks), so a resume never overwrites the viewer's place with 0, and a
+film opened and closed at once is not saved at 0 s.
+
+To save somewhere else, for example your own backend, pass a
+`WatchProgressStore` of your own. It replaces the EYZFlow watch history:
 
 ```swift
 struct MyWatchHistory: WatchProgressStore {
@@ -72,10 +90,13 @@ struct MyWatchHistory: WatchProgressStore {
         try await api.saveProgress(catalogueID, progressSeconds, completed)
     }
 }
+
+EYZFlowPlayerOptions(…, watchProgressStore: MyWatchHistory())
 ```
 
-Films save their position every 10 seconds while playing, on a pause, a seek
-and when the app leaves, and as completed at the end. Trailers save nothing.
+`saveWatchProgress: false` saves nothing at all. An app that already saves
+watch progress to the EYZFlow API itself should pass it, or each position is
+saved twice.
 
 ### Royalties
 
@@ -350,7 +371,7 @@ code (`DEVICE_LIMIT`, `APP_NOT_ALLOWED`, …) fails with that code.
 | Type | Does |
 | --- | --- |
 | `EYZFlowEndpoints` | API and stream CDN origins (production by default). |
-| `PlayerPlatform`, `PlayerApp`, `eyzflowPlayerVersion` | What the player says it is (`ios`, `tvos`, …; `ios/0.6.0`). |
+| `PlayerPlatform`, `PlayerApp`, `eyzflowPlayerVersion` | What the player says it is (`ios`, `tvos`, …; `ios/0.7.0`). |
 | `PlayerLicenseClient.acquire(_:)`, `PlayerLicenseSession` | Player key check and renewal (at `refresh_after`, never sooner than 10 s, a minute after a failure, a refusal reported once). |
 | `PlaybackSessionClient` `open` / `heartbeat` / `close` | Stream and device limits (`X-Device-Id`, `platform`). |
 | `buildAccessToken(_:parameters:)` | The DRM `access-token` header. |
@@ -363,6 +384,7 @@ code (`DEVICE_LIMIT`, `APP_NOT_ALLOWED`, …) fails with that code.
 | `AdBreak`, `AdBreakSchedule`, `parseHLSAdBreaks(_:)`, `loadHLSAdBreaks(http:master:)` | Ad break markers from the HLS playlists; each played once, none passed by seeking. |
 | `ThumbnailTrack`, `ThumbnailLoader` | WebVTT thumbnail tracks, `at(position)`, loaded once per URL. |
 | `EYZFlowSource`, `EYZFlowSourceType` | The stream source: id, title, poster, DRM header, film or trailer, progress, and its HLS, DASH, FairPlay, Widevine and thumbnail URLs. |
+| `WatchProgressStore`, `EYZFlowWatchHistoryStore`, `WatchProgressRecorder`, `resolveWatchProgressStore(…)`, `PlayerWatchProgressConfig` | Watch progress: the EYZFlow watch history or the app's store, when to save, and the config's `completedPercent`. |
 | `HTTPClient`, `URLSessionHTTPClient` | The network, behind a protocol. |
 | `PlaybackScheduler`, `TaskScheduler`, `MonotonicClock` | The timers and clock, injectable for tests. |
 

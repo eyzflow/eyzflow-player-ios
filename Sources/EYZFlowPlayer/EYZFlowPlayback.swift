@@ -51,6 +51,10 @@ public final class EYZFlowPlayback {
     /// Finds seeks in the ticks and time jumps; see `SeekDetector`.
     private var seeks = SeekDetector()
     private var resumed = false
+    /// The player is at the start position: there was none, or the resume
+    /// seek finished. Until then a jump found in the ticks is the player
+    /// getting there, not the viewer seeking.
+    private var resumeLanded = true
     private var resumeSeconds: Double?
     private var resumingFromCast = false
     private var accessHeader: String?
@@ -155,8 +159,12 @@ public final class EYZFlowPlayback {
             usageSender: HTTPUsageSender(endpoints: options.endpoints).sender
         )
         tracker = PlaybackEventTracker(sourceID: options.streamID)
-        recorder = options.watchProgressStore.map {
-            WatchProgressRecorder(store: $0, sourceType: options.sourceType)
+        recorder = options.resolvedWatchProgressStore().map {
+            WatchProgressRecorder(
+                store: $0,
+                sourceType: options.sourceType,
+                startPosition: options.progressSeconds.map { .milliseconds(Int64($0 * 1000)) }
+            )
         }
         coordinator.onLimitReached = { [options] error in options.onLimitReached?(error) }
         coordinator.onLicenseError = { [options] error in options.onLicenseError?(error) }
@@ -199,6 +207,7 @@ public final class EYZFlowPlayback {
             await coordinator.start()
             let config = await playerConfig
             self.config = config
+            recorder?.completedPercent = config.watchProgressCompletedPercent
             resolveEndScreen()
             showsAdCountdown = config.features.adCountdown
             adCountdownLength = config.ads?.countdownLength ?? AdCountdown.defaultLength
@@ -210,6 +219,7 @@ public final class EYZFlowPlayback {
         #else
             await coordinator.start()
             config = await playerConfig
+            recorder?.completedPercent = config.watchProgressCompletedPercent
             resolveEndScreen()
         #endif
         guard state == .loading else { return }
@@ -370,7 +380,7 @@ public final class EYZFlowPlayback {
             position: playback.position,
             duration: playback.duration
         )
-        if playback.state == .playing { recorder?.report(playback.position) }
+        if playback.state == .playing { recorder?.report(playback.position, duration: playback.duration) }
     }
 
     /// Casting ended. The film ending on the TV completes it; otherwise the
@@ -396,6 +406,8 @@ public final class EYZFlowPlayback {
         let source = options.source
         resumeSeconds = seconds
         resumed = false
+        resumeLanded = (seconds ?? 0) <= 0
+        recorder?.reload(from: seconds.map { .milliseconds(Int64($0 * 1000)) })
         seeks.reset(to: .milliseconds(Int64((seconds ?? 0) * 1000)))
         let asset = AVURLAsset(url: source.hlsStreamURL)
         if let accessHeader {
@@ -552,11 +564,24 @@ public final class EYZFlowPlayback {
     private func resumeIfNeeded() {
         guard !resumed else { return }
         resumed = true
-        guard let seconds = resumeSeconds, seconds > 0, let player else { return }
+        guard let seconds = resumeSeconds, seconds > 0, let player else {
+            resumeLanded = true
+            return
+        }
         // Not into the last seconds: resuming there would end at once.
-        if !resumingFromCast, let duration = currentDuration?.inSecondsDouble, seconds >= duration - 5 { return }
+        if !resumingFromCast, let duration = currentDuration?.inSecondsDouble, seconds >= duration - 5 {
+            // Plays from the start instead: its positions are the viewer's.
+            resumeLanded = true
+            recorder?.reload(from: nil)
+            return
+        }
         let target = CMTime(seconds: seconds, preferredTimescale: 600)
-        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
+        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .positiveInfinity) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.player === player else { return }
+                self.resumeLanded = true
+            }
+        }
         seeks.reset(to: .milliseconds(Int64(seconds * 1000)))
     }
 
@@ -565,7 +590,7 @@ public final class EYZFlowPlayback {
         // The time observer also fires on a jump, before the jump
         // notification: the seek is found here then.
         let seek = detectSeek(at: position)
-        if tracker.isPlaying { recorder?.report(position) }
+        if tracker.isPlaying { recorder?.report(position, duration: currentDuration) }
         sync()
         signals.report(position)
         if isAtEnd, let duration = currentDuration, position < duration - .seconds(1) { isAtEnd = false }
@@ -597,7 +622,13 @@ public final class EYZFlowPlayback {
             updateAdCountdown()
         #endif
         tracker.seeked(from: seek.from, to: seek.to, duration: currentDuration)
-        if tracker.hasStarted { recorder?.checkpoint(seek.to) }
+        // Only a seek after the player reached the start position is the
+        // viewer's; before, the recorder still waits for that position.
+        if resumeLanded {
+            recorder?.seeked(to: seek.to, duration: currentDuration)
+        } else if tracker.hasStarted {
+            recorder?.checkpoint(seek.to, duration: currentDuration)
+        }
         return seek
     }
 

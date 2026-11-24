@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.7.0
+
+- Watch history (EYF-493): a film saves its watch progress to the EYZFlow
+  watch history by itself, `PUT /v1/content/storefront/{storefrontID}/watch-history`,
+  when `drmAuthorization` and `storefrontID` are set. Apps no longer need a
+  `WatchProgressStore` of their own; one passed as `watchProgressStore`
+  replaces the default. `EYZFlowPlayerOptions.saveWatchProgress: false`
+  saves nothing. Without the viewer's credentials, and for trailers, nothing
+  is sent. **An app that already saves watch progress to the EYZFlow API
+  itself saves each position twice from this version on, unless it passes
+  `saveWatchProgress: false` or keeps its own store.**
+- A film counts as completed from 95 % of its duration on, or from the player
+  config's new `watchProgress.completedPercent` (clamped to 50–100; 100
+  means only the end). `PlayerWatchProgressConfig`, also inline through
+  `PlayerConfigOverride.watchProgress`.
+- A resumed film saves nothing until playback reaches the resume point or
+  the viewer seeks, so a resume no longer overwrites the viewer's place
+  with 0. A film's first save is never 0 s, not completed. Positions are
+  saved in whole seconds, and a repeat of the last save is skipped. These
+  rules, and the completed share, apply to an app's own store too: it now
+  gets `completed: true` from 95 % on, not only at the end.
+- A film picked on the end screen saves nothing to the EYZFlow watch history
+  (an app's own store still gets it).
+- New public API: `EYZFlowWatchHistoryStore`, `resolveWatchProgressStore(…)`,
+  `watchProgressCompletedPercent(_:)`, `PlayerConfig.watchProgress` and
+  `watchProgressCompletedPercent`; on `WatchProgressRecorder`:
+  `startPosition:`, `completedPercent`, `reload(from:)`, `seeked(to:duration:)`
+  and a `duration:` on `report` and `checkpoint`.
+
 ## 0.6.0
 
 - Chromecast tracks and progress (EYF-483): casting starts the TV with the

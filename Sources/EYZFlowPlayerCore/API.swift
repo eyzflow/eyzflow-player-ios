@@ -1,8 +1,8 @@
 import Foundation
 
 /// This library's version, sent with licence checks and beats. Prefixed so
-/// the backend can tell app players from the web player (`0.6.0`).
-public let eyzflowPlayerVersion = "ios/0.6.0"
+/// the backend can tell app players from the web player (`0.7.0`).
+public let eyzflowPlayerVersion = "ios/0.7.0"
 
 /// The EYZFlow origins the player talks to. Production by default; a host
 /// points them at a dev or staging stack for testing.

@@ -400,6 +400,42 @@ public struct PlayerSkipButtonTypes: Sendable, Hashable {
     }
 }
 
+/// The config's watch progress ("Continue watching"): when a film counts as
+/// watched.
+public struct PlayerWatchProgressConfig: Sendable, Hashable {
+    /// From this share of the film on (in percent), it counts as watched, as
+    /// the config has it; nil when missing or not a number.
+    /// `completedPercentToUse` is the value the player uses.
+    public var completedPercent: Double?
+
+    public init(completedPercent: Double? = nil) {
+        self.completedPercent = completedPercent
+    }
+
+    public init(json: [String: JSONValue]) {
+        self.init(completedPercent: json["completedPercent"]?.numberValue)
+    }
+
+    /// `completedPercent` clamped to 50–100, or 95 when it is missing or not
+    /// a number. 100 means only the end itself.
+    public var completedPercentToUse: Double { watchProgressCompletedPercent(completedPercent) }
+
+    /// `patch`'s values over these.
+    public func merged(with patch: PlayerWatchProgressConfig?) -> PlayerWatchProgressConfig {
+        guard let patch else { return self }
+        return PlayerWatchProgressConfig(completedPercent: patch.completedPercent ?? completedPercent)
+    }
+
+    public var json: JSONValue {
+        var out: [String: JSONValue] = [:]
+        if let completedPercent, completedPercent.isFinite {
+            out["completedPercent"] = completedPercent == completedPercent.rounded()
+                ? .int(Int(completedPercent)) : .double(completedPercent)
+        }
+        return .object(out)
+    }
+}
+
 /// A player config: `GET /v1/player-configs/{configId}`, merged with an
 /// inline [`PlayerConfigOverride`] by [`mergePlayerConfig(_:_:)`].
 public struct PlayerConfig: Sendable, Hashable {
@@ -417,6 +453,8 @@ public struct PlayerConfig: Sendable, Hashable {
     public var skipButtonTypes: PlayerSkipButtonTypes?
     /// How the end screen behaves (`features.endScreen`); nil: the defaults.
     public var endScreen: PlayerEndScreenConfig?
+    /// When a film counts as watched; nil: the defaults (95 %).
+    public var watchProgress: PlayerWatchProgressConfig?
 
     /// The web player's `DEFAULT_CONFIG`, and the backend's defaults.
     public static let defaults = PlayerConfig()
@@ -431,7 +469,8 @@ public struct PlayerConfig: Sendable, Hashable {
         ads: PlayerAdsConfig? = nil,
         drm: PlayerDRMConfig? = nil,
         skipButtonTypes: PlayerSkipButtonTypes? = nil,
-        endScreen: PlayerEndScreenConfig? = nil
+        endScreen: PlayerEndScreenConfig? = nil,
+        watchProgress: PlayerWatchProgressConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -443,6 +482,7 @@ public struct PlayerConfig: Sendable, Hashable {
         self.drm = drm
         self.skipButtonTypes = skipButtonTypes
         self.endScreen = endScreen
+        self.watchProgress = watchProgress
     }
 
     /// The backend's camelCase JSON. Missing or mistyped fields keep the
@@ -459,7 +499,8 @@ public struct PlayerConfig: Sendable, Hashable {
             ads: json["ads"]?.objectValue.map(PlayerAdsConfig.init(json:)),
             drm: json["drm"]?.objectValue.map(PlayerDRMConfig.init(json:)),
             skipButtonTypes: json["skipButtonTypes"]?.objectValue.map(PlayerSkipButtonTypes.init(json:)),
-            endScreen: json["endScreen"]?.objectValue.map(PlayerEndScreenConfig.init(json:))
+            endScreen: json["endScreen"]?.objectValue.map(PlayerEndScreenConfig.init(json:)),
+            watchProgress: json["watchProgress"]?.objectValue.map(PlayerWatchProgressConfig.init(json:))
         )
     }
 
@@ -467,6 +508,12 @@ public struct PlayerConfig: Sendable, Hashable {
     /// type switched on (by default all but the closing credits).
     public func showsSkipButton(for type: StreamSignalType) -> Bool {
         features.skipButtons && (skipButtonTypes ?? PlayerSkipButtonTypes()).allows(type)
+    }
+
+    /// `watchProgress.completedPercent` as the player uses it: 50–100, or 95
+    /// when it is missing or not a number.
+    public var watchProgressCompletedPercent: Double {
+        (watchProgress ?? PlayerWatchProgressConfig()).completedPercentToUse
     }
 
     /// `cast.receiverAppId`, when set.
@@ -488,6 +535,7 @@ public struct PlayerConfig: Sendable, Hashable {
         if let drm { out["drm"] = drm.json }
         if let skipButtonTypes { out["skipButtonTypes"] = skipButtonTypes.json }
         if let endScreen { out["endScreen"] = endScreen.json }
+        if let watchProgress { out["watchProgress"] = watchProgress.json }
         return .object(out)
     }
 
@@ -517,6 +565,8 @@ public struct PlayerConfigOverride: Sendable, Hashable {
     public var skipButtonTypes: PlayerSkipButtonTypes?
     /// Merged field by field.
     public var endScreen: PlayerEndScreenConfig?
+    /// Merged field by field.
+    public var watchProgress: PlayerWatchProgressConfig?
 
     public init(
         id: String? = nil,
@@ -528,7 +578,8 @@ public struct PlayerConfigOverride: Sendable, Hashable {
         ads: PlayerAdsConfig? = nil,
         drm: PlayerDRMConfig? = nil,
         skipButtonTypes: PlayerSkipButtonTypes? = nil,
-        endScreen: PlayerEndScreenConfig? = nil
+        endScreen: PlayerEndScreenConfig? = nil,
+        watchProgress: PlayerWatchProgressConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -540,6 +591,7 @@ public struct PlayerConfigOverride: Sendable, Hashable {
         self.drm = drm
         self.skipButtonTypes = skipButtonTypes
         self.endScreen = endScreen
+        self.watchProgress = watchProgress
     }
 }
 
@@ -563,7 +615,9 @@ public func mergePlayerConfig(_ base: PlayerConfig, _ patch: PlayerConfigOverrid
         skipButtonTypes: patch.skipButtonTypes.map { (base.skipButtonTypes ?? PlayerSkipButtonTypes()).merged(with: $0) }
             ?? base.skipButtonTypes,
         endScreen: patch.endScreen.map { (base.endScreen ?? PlayerEndScreenConfig()).merged(with: $0) }
-            ?? base.endScreen
+            ?? base.endScreen,
+        watchProgress: patch.watchProgress.map { (base.watchProgress ?? PlayerWatchProgressConfig()).merged(with: $0) }
+            ?? base.watchProgress
     )
 }
 

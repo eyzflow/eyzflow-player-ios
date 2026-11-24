@@ -48,7 +48,14 @@ public struct EYZFlowPlayerOptions: Sendable {
     public var endpoints: EYZFlowEndpoints
     /// False turns beats off even when the key has analytics on.
     public var analytics: Bool
-    /// Where a film's watch progress goes.
+    /// False saves no watch progress at all, not even to `watchProgressStore`.
+    /// By default a film saves its position for "Continue watching": to
+    /// `watchProgressStore`, or else, with `drmAuthorization` and
+    /// `storefrontID`, to the EYZFlow watch history.
+    public var saveWatchProgress: Bool
+    /// Where a film's watch progress goes instead of the EYZFlow watch
+    /// history, e.g. the app's own backend. Nil: the EYZFlow watch history
+    /// (`EYZFlowWatchHistoryStore`).
     public var watchProgressStore: (any WatchProgressStore)?
     /// Start playing as soon as the stream is ready.
     public var autoplay: Bool
@@ -98,6 +105,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         endpoints: EYZFlowEndpoints = EYZFlowEndpoints(),
         analytics: Bool = true,
         watchProgressStore: (any WatchProgressStore)? = nil,
+        saveWatchProgress: Bool = true,
         autoplay: Bool = true,
         castReceiverAppID: String? = eyzflowCastReceiverAppID,
         onEvent: (@MainActor @Sendable (PlaybackEvent) -> Void)? = nil,
@@ -125,6 +133,7 @@ public struct EYZFlowPlayerOptions: Sendable {
         self.endpoints = endpoints
         self.analytics = analytics
         self.watchProgressStore = watchProgressStore
+        self.saveWatchProgress = saveWatchProgress
         self.autoplay = autoplay
         self.castReceiverAppID = castReceiverAppID
         self.onEvent = onEvent
@@ -145,6 +154,21 @@ public struct EYZFlowPlayerOptions: Sendable {
             poster: poster,
             sourceType: sourceType,
             progressSeconds: progressSeconds
+        )
+    }
+
+    /// Where this playback saves watch progress, or nil for nowhere: see
+    /// `saveWatchProgress` and `watchProgressStore`.
+    func resolvedWatchProgressStore(http: any HTTPClient = URLSessionHTTPClient()) -> (any WatchProgressStore)? {
+        resolveWatchProgressStore(
+            sourceType: sourceType,
+            saveWatchProgress: saveWatchProgress,
+            appStore: watchProgressStore,
+            authorization: drmAuthorization,
+            storefrontID: storefrontID,
+            offerID: offerID,
+            endpoints: endpoints,
+            http: http
         )
     }
 
