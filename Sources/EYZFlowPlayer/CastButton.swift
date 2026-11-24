@@ -82,10 +82,17 @@ final class CastButton: UIButton {
         let placement = Self.placement(
             safeArea: superview.safeAreaInsets,
             idiom: traitCollection.userInterfaceIdiom,
-            verticalSizeClass: traitCollection.verticalSizeClass
+            verticalSizeClass: traitCollection.verticalSizeClass,
+            measuredLayout: Self.hasMeasuredLayout
         )
         if topConstraint.constant != placement.top { topConstraint.constant = placement.top }
         if trailingConstraint.constant != placement.trailing { trailingConstraint.constant = placement.trailing }
+    }
+
+    /// AVKit's margins below are measured on iOS 26.
+    private static var hasMeasuredLayout: Bool {
+        if #available(iOS 26, *) { return true }
+        return false
     }
 
     /// Where the button sits: one row below AVKit's top bar, in line with its
@@ -94,11 +101,18 @@ final class CastButton: UIButton {
     /// - iPhone portrait: the bar starts at the safe area's top, 21 pt in.
     /// - iPhone landscape: 24 pt down and 37 pt in, inside the safe area.
     /// - iPad: 8 pt below the safe area's top, 10 pt in.
+    /// Before iOS 26 only iPhone portrait was checked; landscape and iPad keep
+    /// the earlier place, 64 pt below the safe area's top and 16 pt in.
     nonisolated static func placement(
         safeArea: UIEdgeInsets,
         idiom: UIUserInterfaceIdiom,
-        verticalSizeClass: UIUserInterfaceSizeClass
+        verticalSizeClass: UIUserInterfaceSizeClass,
+        measuredLayout: Bool = true
     ) -> (top: CGFloat, trailing: CGFloat) {
+        let portraitPhone = idiom != .pad && verticalSizeClass != .compact
+        if !measuredLayout && !portraitPhone {
+            return (safeArea.top + 64, safeArea.right + 16)
+        }
         let barTop: CGFloat
         let trailing: CGFloat
         if idiom == .pad {

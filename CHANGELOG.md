@@ -3,10 +3,11 @@
 ## 0.7.1
 
 - The Cast button (EYF-494) shows the Google Cast icon instead of a TV
-  symbol, in a round button like AVKit's own. It sits one row below AVKit's
-  top bar, in line with the volume control, in portrait and landscape on
-  iPhone and on iPad. It was stuck to the bottom of the volume control in
-  landscape.
+  symbol, in a round button like AVKit's own (glass on iOS 26). On iOS 26
+  it sits one row below AVKit's top bar, in line with the volume control,
+  in iPhone portrait and landscape and on iPad; it was stuck to the bottom
+  of the volume control in landscape. iPhone portrait on earlier iOS uses
+  the same place; landscape and iPad there keep the earlier one.
 
 ## 0.7.0
 

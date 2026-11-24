@@ -78,6 +78,13 @@ struct CastButtonTests {
             idiom: .pad, verticalSizeClass: .regular)
         #expect(iPad.top == 88) // 24 + 8 + 44 + 12
         #expect(iPad.trailing == 10)
+
+        // Before iOS 26, landscape keeps the earlier place.
+        let older = CastButton.placement(
+            safeArea: UIEdgeInsets(top: 0, left: 59, bottom: 21, right: 59),
+            idiom: .phone, verticalSizeClass: .compact, measuredLayout: false)
+        #expect(older.top == 64)
+        #expect(older.trailing == 75) // 59 + 16
     }
 
     @Test("The Cast icon is a template image, so it takes the button's tint")
