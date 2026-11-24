@@ -446,6 +446,10 @@ public final class EYZFlowPlayerViewController: UIViewController {
         options.sourceType = item.sourceType
             ?? (options.isProtected ? .film(catalogueID: item.streamID) : .trailer(catalogueID: item.streamID))
         options.progressSeconds = nil
+        // A picked film is another catalogue entry, with no offer or
+        // catalogue id of its own here: it saves nothing to the EYZFlow watch
+        // history. An app's own store still gets it, as before.
+        if options.watchProgressStore == nil { options.saveWatchProgress = false }
         let old = playback
         placeVideo(corner: false)
         unhook(old)

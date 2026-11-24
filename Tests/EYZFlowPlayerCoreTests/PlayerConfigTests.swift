@@ -287,3 +287,47 @@ struct PlayerConfigClientTests {
         #expect(await configs.load("cfg_slow") == nil)
     }
 }
+
+@Suite("PlayerConfig watchProgress")
+struct PlayerWatchProgressConfigTests {
+    @Test("missing: 95 %")
+    func missing() {
+        #expect(PlayerConfig.defaults.watchProgress == nil)
+        #expect(PlayerConfig.defaults.watchProgressCompletedPercent == 95)
+        #expect(PlayerConfig(json: remoteObject).watchProgressCompletedPercent == 95)
+        #expect(PlayerConfig(json: ["watchProgress": [:]]).watchProgressCompletedPercent == 95)
+    }
+
+    @Test("completedPercent: read, clamped to 50–100; 95 when not a number")
+    func completedPercent() {
+        func percent(_ value: JSONValue) -> Double {
+            PlayerConfig(json: ["watchProgress": ["completedPercent": value]]).watchProgressCompletedPercent
+        }
+        #expect(percent(90) == 90)
+        #expect(percent(.double(87.5)) == 87.5)
+        #expect(percent(100) == 100)
+        #expect(percent(20) == 50)
+        #expect(percent(150) == 100)
+        #expect(percent("90") == 95)
+        #expect(percent(.null) == 95)
+        #expect(PlayerConfig(json: ["watchProgress": "90"]).watchProgress == nil)
+    }
+
+    @Test("round-trips through json")
+    func json() {
+        let json: JSONValue = ["watchProgress": ["completedPercent": 90]]
+        let config = PlayerConfig(json: json.objectValue!)
+        #expect(config.watchProgress == PlayerWatchProgressConfig(completedPercent: 90))
+        #expect(config.json.objectValue?["watchProgress"] == ["completedPercent": 90])
+    }
+
+    @Test("an inline watchProgress wins over the remote config's")
+    func inline() {
+        let remote = PlayerConfig(watchProgress: PlayerWatchProgressConfig(completedPercent: 90))
+        #expect(remote.merged(with: PlayerConfigOverride()).watchProgressCompletedPercent == 90)
+        let merged = remote.merged(with: PlayerConfigOverride(watchProgress: PlayerWatchProgressConfig(completedPercent: 100)))
+        #expect(merged.watchProgressCompletedPercent == 100)
+        let empty = remote.merged(with: PlayerConfigOverride(watchProgress: PlayerWatchProgressConfig()))
+        #expect(empty.watchProgressCompletedPercent == 90)
+    }
+}
