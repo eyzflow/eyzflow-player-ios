@@ -18,7 +18,9 @@
 - A resumed film saves nothing until playback reaches the resume point or
   the viewer seeks, so a resume no longer overwrites the viewer's place
   with 0. A film's first save is never 0 s, not completed. Positions are
-  saved in whole seconds, and a repeat of the last save is skipped.
+  saved in whole seconds, and a repeat of the last save is skipped. These
+  rules, and the completed share, apply to an app's own store too: it now
+  gets `completed: true` from 95 % on, not only at the end.
 - A film picked on the end screen saves nothing to the EYZFlow watch history
   (an app's own store still gets it).
 - New public API: `EYZFlowWatchHistoryStore`, `resolveWatchProgressStore(…)`,
