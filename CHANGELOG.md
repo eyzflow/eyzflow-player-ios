@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1
+
+- The Cast button (EYF-494) shows the Google Cast icon instead of a TV
+  symbol, in a round button like AVKit's own. It sits one row below AVKit's
+  top bar, in line with the volume control, in portrait and landscape on
+  iPhone and on iPad. It was stuck to the bottom of the volume control in
+  landscape.
+
 ## 0.7.0
 
 - Watch history (EYF-493): a film saves its watch progress to the EYZFlow
