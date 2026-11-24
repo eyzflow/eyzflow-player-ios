@@ -20,8 +20,19 @@ public protocol CastConnection: AnyObject {
     func play()
     func pause()
     func seek(to position: Duration)
+    func requestStatus()
+    func setActiveTracks(_ ids: [Int])
+    /// Releases a superseded launch before it has loaded any media.
+    func disconnect()
     /// Stops the media and closes the connection.
     func stop()
+}
+
+// Existing custom backends can continue to provide transport-only casting.
+public extension CastConnection {
+    func requestStatus() {}
+    func setActiveTracks(_ ids: [Int]) {}
+    func disconnect() {}
 }
 
 /// Where casting is.
@@ -74,7 +85,7 @@ public final class CastController {
 
     /// Any of the above changed.
     public var onChange: (@MainActor () -> Void)?
-    /// Every status the TV reports while casting.
+    /// Receiver updates and estimated progress between reports while playing.
     public var onPlayback: (@MainActor (CastPlayback) -> Void)?
     /// Casting ended, with where the TV was.
     public var onEnded: (@MainActor (CastEndReason, Duration) -> Void)?
@@ -82,7 +93,15 @@ public final class CastController {
     private var connection: (any CastConnection)?
     private var loadTimer: (any PlaybackTimer)?
     private var started = false
-    private var ending = false
+    private var attempt: UUID?
+    private var clockTimer: (any PlaybackTimer)?
+    private let now: MonotonicClock
+    private var anchorMs = 0
+    private var lastStatusRequestMs = 0
+    private var seeking = false
+    private var pendingTracks = CastTrackSelection()
+    // EDIT_TRACKS_INFO replaces every track. Compose adjacent edits until the TV replies.
+    private var requestedTrackIDs: [Int]?
     private var startAt: Duration = .zero
     private var last = CastPlayback()
     private var disposed = false
@@ -91,12 +110,14 @@ public final class CastController {
         backend: any CastBackend,
         scheduler: any PlaybackScheduler = TaskScheduler(),
         loadTimeout: Duration = .seconds(20),
+        now: MonotonicClock? = nil,
         log: @escaping @MainActor (String) -> Void = { message in
             #if DEBUG
                 print(message)
             #endif
         }
     ) {
+        self.now = now ?? makeMonotonicClock()
         self.backend = backend
         self.scheduler = scheduler
         self.loadTimeout = loadTimeout
@@ -127,51 +148,85 @@ public final class CastController {
     public func cast(_ media: CastMedia, to target: CastTarget, appID: String) async {
         guard !isCasting, !disposed else { return }
         started = false
-        ending = false
+        let id = UUID()
+        attempt = id
+        seeking = false
+        pendingTracks = media.trackSelection
+        requestedTrackIDs = nil
         startAt = media.startAt
         last = CastPlayback(position: media.startAt)
+        anchorMs = now()
+        lastStatusRequestMs = anchorMs
         state = .connecting(target)
         let connection: any CastConnection
         do {
-            connection = try await connect(target, appID: appID)
+            connection = try await connect(target, appID: appID, attempt: id)
         } catch {
+            guard attempt == id else { return }
             log("[eyzflow-cast] connect failed: \(error)")
-            ending = true
-            state = .failed(target, reason: "\(error)")
-            onEnded?(.failed, media.startAt)
+            fail(target, "\(error)", at: media.startAt)
             return
         }
-        guard !disposed, !ending else {
-            connection.stop()
+        guard attempt == id else {
+            connection.disconnect()
             return
         }
         self.connection = connection
-        connection.onPlayback = { [weak self] playback in self?.received(playback, from: target) }
+        connection.onPlayback = { [weak self] playback in
+            guard let self, attempt == id else { return }
+            received(playback, from: target)
+        }
         connection.onError = { [weak self] reason in
-            guard let self else { return }
+            guard let self, attempt == id else { return }
             log("[eyzflow-cast] receiver refused: \(reason)")
-            fail(target, reason, at: positionOf(last))
+            fail(target, reason, at: currentPosition)
         }
         connection.onClose = { [weak self] in
-            guard let self else { return }
-            end(target, .disconnected, at: positionOf(last))
+            guard let self, attempt == id else { return }
+            end(target, .disconnected, at: currentPosition)
         }
         loadTimer = scheduler.schedule(after: loadTimeout) { [weak self] in
-            guard let self, !started else { return }
+            guard let self, attempt == id, !started else { return }
             fail(target, "timeout", at: startAt)
+        }
+        clockTimer = scheduler.scheduleRepeating(every: .seconds(1)) { [weak self] in
+            guard let self, attempt == id else { return }
+            tick(target)
         }
         connection.load(media)
     }
 
     public func play() { connection?.play() }
     public func pause() { connection?.pause() }
-    public func seek(to position: Duration) { connection?.seek(to: position) }
+    public func seek(to position: Duration) {
+        guard let connection else { return }
+        last.position = currentPosition
+        seeking = true
+        connection.seek(to: position)
+    }
+
+    public func selectTrack(_ kind: CastTrack.Kind, id: Int?) {
+        guard case .active = state else { return }
+        if let id {
+            guard last.tracks.contains(where: { $0.kind == kind && $0.id == id }) else { return }
+        } else if kind != .subtitles {
+            return
+        }
+        let active = requestedTrackIDs ?? last.activeTrackIDs
+        let ids = last.replacing(kind, with: id, in: active ?? [])
+        if active?.sorted() != ids { requestTracks(ids) }
+    }
+
+    private func requestTracks(_ ids: [Int]) {
+        requestedTrackIDs = ids
+        connection?.setActiveTracks(ids)
+    }
 
     /// Stops casting. The phone takes over at the TV's position.
     public func stop() {
         switch state {
         case .connecting(let target): end(target, .stopped, at: startAt)
-        case .active(let target, let playback): end(target, .stopped, at: positionOf(playback))
+        case .active(let target, _): end(target, .stopped, at: currentPosition)
         default: break
         }
     }
@@ -179,29 +234,44 @@ public final class CastController {
     /// Ends casting and forgets the TV, without reporting how it ended.
     public func dispose() {
         disposed = true
-        loadTimer?.cancel()
-        connection?.stop()
-        connection = nil
+        cancel()
+    }
+
+    /// Ends remote playback without handing an invalidated session back to the phone.
+    package func cancel() {
+        guard attempt != nil else { return }
+        releaseConnection(stopMedia: true)
+        state = .off
     }
 
     /// Connects; when that fails for a network reason, scans again and retries
     /// once with the TV's current address: a TV that restarted listens on a
     /// new port. A receiver the TV refused (`LAUNCH_ERROR`) is not retried.
-    private func connect(_ target: CastTarget, appID: String) async throws -> any CastConnection {
+    private func connect(_ target: CastTarget, appID: String, attempt id: UUID) async throws -> any CastConnection {
         do {
             return try await backend.connect(target, appID: appID)
         } catch {
-            if "\(error)".contains("LAUNCH_ERROR") || disposed { throw error }
+            if "\(error)".contains("LAUNCH_ERROR") || attempt != id { throw error }
             log("[eyzflow-cast] connect failed (\(error)); looking again")
             let found = try await backend.discover(timeout: .seconds(4))
+            guard attempt == id else { throw error }
             devices = found
-            guard let again = found.first(where: { $0.id == target.id }), !disposed else { throw error }
+            guard let again = found.first(where: { $0.id == target.id }) else { throw error }
             return try await backend.connect(again, appID: appID)
         }
     }
 
     private func received(_ playback: CastPlayback, from target: CastTarget) {
-        guard !ending else { return }
+        // An idle status before LOAD takes effect describes the previous media.
+        if playback.state == .idle, !started, !playback.isError { return }
+        var playback = playback
+        if playback.hasReportedPosition {
+            seeking = false
+        } else {
+            playback.estimatePosition(currentPosition)
+        }
+        anchorMs = now()
+        if playback.hasReportedActiveTrackIDs { requestedTrackIDs = nil }
         last = playback
         if playback.state == .playing || playback.state == .paused {
             started = true
@@ -212,18 +282,61 @@ public final class CastController {
             return
         }
         if playback.isError {
-            fail(target, "ERROR", at: positionOf(playback))
+            fail(target, "ERROR", at: playback.position)
             return
         }
-        // Before the media started, the receiver reports idle with no reason.
-        if playback.state == .idle, !started { return }
+        applyPhoneTracks(to: playback)
+        publish(playback, from: target)
+    }
+
+    private var currentPosition: Duration {
+        guard !seeking, last.state == .playing else { return last.position }
+        let estimate = last.position + .milliseconds(max(0, now() - anchorMs))
+        return min(estimate, last.duration ?? estimate)
+    }
+
+    private func tick(_ target: CastTarget) {
+        guard case .active = state else { return }
+        if now() - lastStatusRequestMs >= 15_000 {
+            lastStatusRequestMs = now()
+            connection?.requestStatus()
+        }
+        guard last.state == .playing, !seeking else { return }
+        var estimate = last
+        estimate.estimatePosition(currentPosition)
+        publish(estimate, from: target)
+    }
+
+    private func publish(_ playback: CastPlayback, from target: CastTarget) {
         state = .active(target, playback)
         onPlayback?(playback)
     }
 
-    /// Before the receiver reported a position, the TV is where it started.
-    private func positionOf(_ playback: CastPlayback) -> Duration {
-        playback.position > .zero ? playback.position : startAt
+    private func applyPhoneTracks(to playback: CastPlayback) {
+        let active = requestedTrackIDs ?? playback.activeTrackIDs
+        var ids = active ?? []
+        func selectLanguage(_ language: String, for kind: CastTrack.Kind) {
+            let matches = playback.tracks.filter { $0.kind == kind && CastTrackSelection.matches(language, $0.language) }
+            if let first = matches.first, !matches.contains(where: { ids.contains($0.id) }) {
+                ids = playback.replacing(kind, with: first.id, in: ids)
+            }
+        }
+        if let language = pendingTracks.audioLanguage, playback.tracks.contains(where: { $0.kind == .audio }) {
+            selectLanguage(language, for: .audio)
+            pendingTracks.audioLanguage = nil
+        }
+        var explicitOff = false
+        if playback.tracks.contains(where: { $0.kind == .subtitles }) {
+            switch pendingTracks.subtitles {
+            case .unspecified: break
+            case .language(let language): selectLanguage(language, for: .subtitles)
+            case .off:
+                ids = playback.replacing(.subtitles, with: nil, in: ids)
+                explicitOff = true
+            }
+            pendingTracks.subtitles = .unspecified
+        }
+        if ids.sorted() != (active ?? []).sorted() || (explicitOff && active == nil) { requestTracks(ids) }
     }
 
     private func fail(_ target: CastTarget, _ reason: String, at position: Duration) {
@@ -232,16 +345,24 @@ public final class CastController {
 
     /// Ends casting once, whichever way it ends.
     private func end(_ target: CastTarget, _ reason: CastEndReason, at position: Duration, failure: String? = nil) {
-        guard !ending else { return }
-        ending = true
-        log("[eyzflow-cast] \(target.name): ended (\(reason)\(failure.map { ": \($0)" } ?? "")) at \(position)")
-        loadTimer?.cancel()
-        loadTimer = nil
-        let connection = self.connection
-        self.connection = nil
+        guard attempt != nil else { return }
+        log("[eyzflow-cast] \(target.name): ended (\(reason)) at \(position)")
+        releaseConnection(stopMedia: reason != .disconnected)
         state = reason == .failed ? .failed(target, reason: failure ?? "failed") : .off
         onEnded?(reason, position)
-        // A TV that closed the connection has nothing left to stop.
-        if reason != .disconnected { connection?.stop() }
+    }
+
+    private func releaseConnection(stopMedia: Bool) {
+        attempt = nil
+        loadTimer?.cancel()
+        clockTimer?.cancel()
+        loadTimer = nil
+        clockTimer = nil
+        let connection = self.connection
+        self.connection = nil
+        connection?.onPlayback = nil
+        connection?.onClose = nil
+        connection?.onError = nil
+        if stopMedia { connection?.stop() }
     }
 }

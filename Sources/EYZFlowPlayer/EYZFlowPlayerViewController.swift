@@ -64,7 +64,7 @@ public final class EYZFlowPlayerViewController: UIViewController {
     /// Chromecast: nil when the options turn it off.
     private var cast: CastController?
     private var castScanned = false
-    private let castButton = UIButton(type: .system)
+    private let castButton = CastButton(type: .system)
     private let castingView = CastingView()
 
     /// IMA draws ads here, over AVKit's player. It lets every touch through
@@ -200,6 +200,9 @@ public final class EYZFlowPlayerViewController: UIViewController {
             // presentation is refused.
             if appeared { presentPlayer() }
         case .failed(let message):
+            #if os(iOS)
+                castingView.isHidden = true
+            #endif
             spinner.stopAnimating()
             messageLabel.text = message
             messageLabel.isHidden = false
@@ -576,6 +579,7 @@ extension EYZFlowPlayerViewController {
             }
         }
         castingView.onSeek = { [weak self] position in self?.cast?.seek(to: position) }
+        castingView.onTrackSelected = { [weak cast] kind, id in cast?.selectTrack(kind, id: id) }
         castingView.onStop = { [weak self] in self?.cast?.stop() }
         cast.onChange = { [weak self] in self?.castChanged() }
         cast.onPlayback = { [weak self] playback in self?.playback.castReported(playback) }
@@ -618,8 +622,9 @@ extension EYZFlowPlayerViewController {
         castButton.accessibilityLabel = NSLocalizedString("Cast to a TV", comment: "Opens the Chromecast picker")
         castButton.removeTarget(nil, action: nil, for: .allEvents)
         castButton.addTarget(self, action: #selector(castTapped), for: .primaryActionTriggered)
-        castButton.isHidden = (cast?.devices.isEmpty ?? true) || inAdBreak
         castButton.removeFromSuperview()
+        castButton.controlsOwner = controller
+        castButton.isHidden = (cast?.devices.isEmpty ?? true) || (cast?.isCasting ?? false) || inAdBreak
         castButton.translatesAutoresizingMaskIntoConstraints = false
         controller.view.addSubview(castButton)
         let guide = controller.view.safeAreaLayoutGuide
@@ -648,14 +653,18 @@ extension EYZFlowPlayerViewController {
     }
 
     private func startCasting(to target: CastTarget) {
-        guard let cast, let appID = playback.options.castReceiverAppID,
-              let media = playback.handOverToCast() else { return }
-        castingView.show(title: playback.options.title, poster: playback.options.poster)
-        castingView.render(.connecting(target))
-        castingView.isHidden = false
-        view.bringSubviewToFront(closeButton)
-        presentedViewController?.dismiss(animated: true)
-        Task { await cast.cast(media, to: target, appID: appID) }
+        guard let cast, let appID = playback.options.castReceiverAppID else { return }
+        Task { [weak self, playback] in
+            await playback.prepareTracksForCast()
+            guard let self, !finished, self.playback === playback,
+                  let media = playback.handOverToCast(using: cast) else { return }
+            castingView.show(title: playback.options.title, poster: playback.options.poster)
+            castingView.render(.connecting(target))
+            castingView.isHidden = false
+            view.bringSubviewToFront(closeButton)
+            presentedViewController?.dismiss(animated: true)
+            await cast.cast(media, to: target, appID: appID)
+        }
     }
 
     private func castEnded(_ reason: CastEndReason, at position: Duration) {

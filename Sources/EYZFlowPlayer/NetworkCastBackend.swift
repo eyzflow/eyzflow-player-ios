@@ -227,10 +227,20 @@ final class NetworkCastConnection: CastConnection {
     func pause() { channel.pause() }
     func seek(to position: Duration) { channel.seek(to: position) }
 
+    func requestStatus() { channel.requestStatus() }
+    func setActiveTracks(_ ids: [Int]) { channel.setActiveTracks(ids) }
+
     func stop() {
         channel.stop()
+        disconnect()
+    }
+
+    func disconnect() {
+        // Let queued STOP/CLOSE frames leave the socket before cancelling it.
+        channel.onClose = nil
         channel.close()
-        connection.cancel()
+        connection.send(content: nil, contentContext: .finalMessage, isComplete: true,
+                        completion: .contentProcessed { [connection] _ in connection.cancel() })
     }
 
     private func shutDown() {
