@@ -30,7 +30,7 @@ the module `GoogleInteractiveMediaAds`.
 ## Install
 
 ```swift
-.package(url: "https://github.com/eyzflow/eyzflow-player-ios", from: "0.5.1"),
+.package(url: "https://github.com/eyzflow/eyzflow-player-ios", from: "0.6.0"),
 // …
 .product(name: "EYZFlowPlayer", package: "EYZFlowPlayer"),
 ```
@@ -350,7 +350,7 @@ code (`DEVICE_LIMIT`, `APP_NOT_ALLOWED`, …) fails with that code.
 | Type | Does |
 | --- | --- |
 | `EYZFlowEndpoints` | API and stream CDN origins (production by default). |
-| `PlayerPlatform`, `PlayerApp`, `eyzflowPlayerVersion` | What the player says it is (`ios`, `tvos`, …; `ios/0.5.1`). |
+| `PlayerPlatform`, `PlayerApp`, `eyzflowPlayerVersion` | What the player says it is (`ios`, `tvos`, …; `ios/0.6.0`). |
 | `PlayerLicenseClient.acquire(_:)`, `PlayerLicenseSession` | Player key check and renewal (at `refresh_after`, never sooner than 10 s, a minute after a failure, a refusal reported once). |
 | `PlaybackSessionClient` `open` / `heartbeat` / `close` | Stream and device limits (`X-Device-Id`, `platform`). |
 | `buildAccessToken(_:parameters:)` | The DRM `access-token` header. |

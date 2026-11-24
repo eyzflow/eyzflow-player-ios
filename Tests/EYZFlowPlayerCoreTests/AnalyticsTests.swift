@@ -210,7 +210,7 @@ struct BeatTransportTests {
     func body() throws {
         let beat = Beat(
             token: "t", sid: "s", seq: 1, startedAt: 2, isFinal: false, streamID: "x", isLive: false,
-            autoplay: true, drm: nil, playerVersion: "ios/0.5.1", platform: nil,
+            autoplay: true, drm: nil, playerVersion: "ios/0.6.0", platform: nil,
             metrics: BeatMetrics(), errors: [BeatError(n: 0, code: "E")]
         )
         let decoded = try #require(JSONValue.decode(JSONEncoder().encode(beat))?.objectValue)
