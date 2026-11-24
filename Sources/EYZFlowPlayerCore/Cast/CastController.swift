@@ -285,7 +285,9 @@ public final class CastController {
             fail(target, "ERROR", at: playback.position)
             return
         }
-        applyPhoneTracks(to: playback)
+        // The receiver goes back to its default tracks when the film starts, so
+        // a switch sent while it still loads is lost: wait until it plays.
+        if started { applyPhoneTracks(to: playback) }
         publish(playback, from: target)
     }
 

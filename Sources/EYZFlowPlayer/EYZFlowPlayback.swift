@@ -358,7 +358,11 @@ public final class EYZFlowPlayback {
     /// watch progress, as the phone's player would.
     public func castReported(_ playback: CastPlayback) {
         guard state == .casting else { return }
-        handoffTracks = handoffTracks?.updated(with: playback)
+        // While the TV loads it reports its default tracks, not the viewer's:
+        // stopping then keeps the phone's own choice.
+        if playback.state == .playing || playback.state == .paused {
+            handoffTracks = handoffTracks?.updated(with: playback)
+        }
         tracker.update(
             isReady: true,
             isPlaying: playback.state == .playing,

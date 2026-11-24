@@ -310,6 +310,25 @@ struct CastControllerTests {
         #expect(film.trackSelection.updated(with: .init()) == film.trackSelection)
     }
 
+    @Test("the phone's tracks wait until the TV plays, since the receiver resets them when the film starts")
+    func tracksWaitForPlayback() async {
+        var film = media
+        film.trackSelection = CastTrackSelection(audioLanguage: "en", subtitles: .language("de"))
+        await cast.cast(film, to: livingRoom, appID: "A")
+        let loading = CastPlayback().updated(with: [
+            "playerState": "BUFFERING", "activeTrackIds": [1],
+            "media": ["tracks": [
+                ["type": "AUDIO", "trackId": 1, "language": "fr"],
+                ["type": "AUDIO", "trackId": 2, "language": "en"],
+                ["type": "TEXT", "trackId": 3, "language": "de"],
+            ]],
+        ])
+        backend.tv.report(loading)
+        #expect(backend.tv.edits.isEmpty)
+        backend.tv.report(loading.updated(with: ["playerState": "PLAYING"]))
+        #expect(backend.tv.edits == [[2, 3]])
+    }
+
     @Test("subtitles off is applied once when the receiver has not confirmed its defaults")
     func outgoingOff() async {
         var film = media
