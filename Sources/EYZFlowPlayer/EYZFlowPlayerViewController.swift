@@ -613,29 +613,17 @@ extension EYZFlowPlayerViewController {
     }
 
     /// The Cast button, over AVKit's player. AVKit has no place for it in its
-    /// own controls on iPhone, so it sits in the top trailing corner, below
-    /// AVKit's top bar.
+    /// own controls on iPhone, so it sits one row below AVKit's top bar, under
+    /// the volume control.
     private func addCastButton(to controller: AVPlayerViewController) {
         guard cast != nil else { return }
-        var configuration = UIButton.Configuration.filled()
-        configuration.image = UIImage(systemName: "tv.badge.wifi")
-        configuration.baseForegroundColor = .white
-        configuration.baseBackgroundColor = UIColor(white: 0, alpha: 0.45)
-        configuration.cornerStyle = .capsule
-        castButton.configuration = configuration
+        castButton.applyStyle()
         castButton.accessibilityLabel = NSLocalizedString("Cast to a TV", comment: "Opens the Chromecast picker")
         castButton.removeTarget(nil, action: nil, for: .allEvents)
         castButton.addTarget(self, action: #selector(castTapped), for: .primaryActionTriggered)
-        castButton.removeFromSuperview()
         castButton.controlsOwner = controller
         castButton.isHidden = (cast?.devices.isEmpty ?? true) || (cast?.isCasting ?? false) || inAdBreak
-        castButton.translatesAutoresizingMaskIntoConstraints = false
-        controller.view.addSubview(castButton)
-        let guide = controller.view.safeAreaLayoutGuide
-        NSLayoutConstraint.activate([
-            castButton.topAnchor.constraint(equalTo: guide.topAnchor, constant: 64),
-            castButton.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
-        ])
+        castButton.pin(in: controller.view)
     }
 
     @objc private func castTapped() {
